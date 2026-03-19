@@ -172,7 +172,7 @@ def write_weekly_reports(weeks_data, output_dir):
         filename = f"training_log_{year}-W{week:02d}.md"
         filepath = os.path.join(output_dir, filename)
 
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
         written.append(filepath)
@@ -264,7 +264,7 @@ def write_monthly_reports(weeks_data, output_dir):
 
         filename = f"training_log_{year}-{month:02d}.md"
         filepath = os.path.join(output_dir, filename)
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         written.append(filepath)
 
@@ -362,7 +362,7 @@ def write_single_report(weeks_data, output_dir):
 
     filename = f"training_log_{first_date}_to_{last_date}.md"
     filepath = os.path.join(output_dir, filename)
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
     return [filepath]
