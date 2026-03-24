@@ -79,6 +79,44 @@ def fetch_activities(token, after_ts, before_ts, quiet=False):
     return all_activities
 
 
+def fetch_activity_detail(token, activity_id, quiet=False):
+    """Fetch detailed activity data (includes description and private_note).
+
+    Returns dict with 'description' and 'private_note' keys, or empty strings if unavailable.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+
+    if not quiet:
+        print(f"  Fetching details for activity {activity_id}...")
+
+    time.sleep(0.5)  # rate limit courtesy
+
+    try:
+        resp = _request_with_retry(
+            "GET",
+            f"{BASE_URL}/activities/{activity_id}",
+            headers,
+        )
+    except requests.exceptions.RequestException:
+        print(
+            f"  Warning: failed to fetch details for activity {activity_id}",
+            file=sys.stderr,
+        )
+        return {"description": "", "private_note": ""}
+
+    if resp.status_code == 401:
+        return {"description": "", "private_note": ""}
+
+    try:
+        data = resp.json()
+        return {
+            "description": data.get("description") or "",
+            "private_note": data.get("private_note") or "",
+        }
+    except (ValueError, KeyError):
+        return {"description": "", "private_note": ""}
+
+
 def fetch_hr_stream(token, activity_id, quiet=False):
     """Fetch HR and time streams for an activity. Returns (heartrate_data, time_data) or (None, None)."""
     headers = {"Authorization": f"Bearer {token}"}

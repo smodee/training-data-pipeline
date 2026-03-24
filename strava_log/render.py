@@ -153,10 +153,31 @@ def render_weekly_report(year, week, activities, summary):
         if a["suffer_score"] is not None:
             lines.append(f"- Suffer score: {a['suffer_score']}")
 
+        # Description and private note
+        if a.get("description"):
+            lines.append(f"- Description: {a['description']}")
+        if a.get("private_note"):
+            lines.append(f"- Private note: {a['private_note']}")
+
         lines.append("")
+
+    # Collect notes from activities into the Notes section
+    notes_entries = []
+    for a in activities:
+        parts = []
+        if a.get("description"):
+            parts.append(a["description"])
+        if a.get("private_note"):
+            parts.append(a["private_note"])
+        if parts:
+            notes_entries.append(f"- **{a['date']} — {a['name']}**: {' | '.join(parts)}")
 
     lines.append("## Notes")
     lines.append("")
+    if notes_entries:
+        for entry in notes_entries:
+            lines.append(entry)
+        lines.append("")
     lines.append("")
 
     return "\n".join(lines)
@@ -256,10 +277,29 @@ def write_monthly_reports(weeks_data, output_dir):
             if a["suffer_score"] is not None:
                 lines.append(f"- Suffer score: {a['suffer_score']}")
 
+            if a.get("description"):
+                lines.append(f"- Description: {a['description']}")
+            if a.get("private_note"):
+                lines.append(f"- Private note: {a['private_note']}")
+
             lines.append("")
+
+        notes_entries = []
+        for a in activities:
+            parts = []
+            if a.get("description"):
+                parts.append(a["description"])
+            if a.get("private_note"):
+                parts.append(a["private_note"])
+            if parts:
+                notes_entries.append(f"- **{a['date']} — {a['name']}**: {' | '.join(parts)}")
 
         lines.append("## Notes")
         lines.append("")
+        if notes_entries:
+            for entry in notes_entries:
+                lines.append(entry)
+            lines.append("")
         lines.append("")
 
         filename = f"training_log_{year}-{month:02d}.md"
@@ -354,10 +394,29 @@ def write_single_report(weeks_data, output_dir):
             if a["suffer_score"] is not None:
                 lines.append(f"- Suffer score: {a['suffer_score']}")
 
+            if a.get("description"):
+                lines.append(f"- Description: {a['description']}")
+            if a.get("private_note"):
+                lines.append(f"- Private note: {a['private_note']}")
+
             lines.append("")
+
+    notes_entries = []
+    for a in all_activities:
+        parts = []
+        if a.get("description"):
+            parts.append(a["description"])
+        if a.get("private_note"):
+            parts.append(a["private_note"])
+        if parts:
+            notes_entries.append(f"- **{a['date']} — {a['name']}**: {' | '.join(parts)}")
 
     lines.append("## Notes")
     lines.append("")
+    if notes_entries:
+        for entry in notes_entries:
+            lines.append(entry)
+        lines.append("")
     lines.append("")
 
     filename = f"training_log_{first_date}_to_{last_date}.md"
