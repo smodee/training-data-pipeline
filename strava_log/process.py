@@ -72,17 +72,20 @@ def is_run_type(sport_type):
     return sport_type in ("Run", "TrailRun", "VirtualRun")
 
 
-def process_activity(activity, hr_data, time_data, cfg):
+def process_activity(activity, hr_data, time_data, cfg, detail=None):
     """Process a single activity and return an enriched dict."""
     sport = activity.get("sport_type") or activity.get("type", "Unknown")
     distance_m = activity.get("distance", 0)
     moving_time_s = activity.get("moving_time", 0)
     elevation = activity.get("total_elevation_gain", 0)
     manual = activity.get("manual", False)
+    detail = detail or {}
 
     result = {
         "id": activity["id"],
         "name": activity.get("name", "Untitled"),
+        "description": detail.get("description", ""),
+        "private_note": detail.get("private_note", ""),
         "sport_type": sport,
         "date": parse_date(activity["start_date_local"]).strftime("%Y-%m-%d"),
         "start_date_local": activity["start_date_local"],

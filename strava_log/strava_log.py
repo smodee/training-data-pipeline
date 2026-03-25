@@ -9,7 +9,7 @@ from dateutil.parser import parse as parse_date
 
 from .config import load_config
 from .auth import load_or_authorize
-from .api import fetch_activities, fetch_hr_stream
+from .api import fetch_activities, fetch_activity_detail, fetch_hr_stream
 from .process import process_activity, group_by_week, compute_weekly_summary
 from .render import write_weekly_reports, write_monthly_reports, write_single_report
 
@@ -111,7 +111,9 @@ def main(weeks, from_date, to_date, output, report_format, auth, quiet):
                 access_token, activity["id"], quiet=quiet
             )
 
-        processed.append(process_activity(activity, hr_data, time_data, cfg))
+        detail = fetch_activity_detail(access_token, activity["id"], quiet=quiet)
+
+        processed.append(process_activity(activity, hr_data, time_data, cfg, detail=detail))
 
     # Group by week and compute summaries
     weeks_grouped = group_by_week(processed)
