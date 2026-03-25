@@ -35,10 +35,6 @@ Personal training data pipeline — pulls activities from the Strava API, comput
 - Suffer score: 72
 - Description: Progressive build to marathon pace last 5k
 - Private note: Left calf felt tight after km 12
-
-## Notes
-
-- **2026-03-16 — Easy long run**: Progressive build to marathon pace last 5k | Left calf felt tight after km 12
 ```
 
 ## Setup
