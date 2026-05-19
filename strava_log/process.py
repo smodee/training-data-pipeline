@@ -86,6 +86,7 @@ def process_activity(activity, hr_data, time_data, cfg, detail=None):
         "name": activity.get("name", "Untitled"),
         "description": detail.get("description", ""),
         "private_note": detail.get("private_note", ""),
+        "gear": detail.get("gear_name", ""),
         "sport_type": sport,
         "date": parse_date(activity["start_date_local"]).strftime("%Y-%m-%d"),
         "start_date_local": activity["start_date_local"],

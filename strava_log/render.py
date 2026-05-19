@@ -158,6 +158,8 @@ def render_weekly_report(year, week, activities, summary):
             lines.append(f"- Description: {a['description']}")
         if a.get("private_note"):
             lines.append(f"- Private note: {a['private_note']}")
+        if a.get("gear"):
+            lines.append(f"- Gear: {a['gear']}")
 
         lines.append("")
 
@@ -262,6 +264,8 @@ def write_monthly_reports(weeks_data, output_dir):
                 lines.append(f"- Description: {a['description']}")
             if a.get("private_note"):
                 lines.append(f"- Private note: {a['private_note']}")
+            if a.get("gear"):
+                lines.append(f"- Gear: {a['gear']}")
 
             lines.append("")
 
@@ -361,6 +365,8 @@ def write_single_report(weeks_data, output_dir):
                 lines.append(f"- Description: {a['description']}")
             if a.get("private_note"):
                 lines.append(f"- Private note: {a['private_note']}")
+            if a.get("gear"):
+                lines.append(f"- Gear: {a['gear']}")
 
             lines.append("")
 

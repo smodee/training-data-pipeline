@@ -102,19 +102,21 @@ def fetch_activity_detail(token, activity_id, quiet=False):
             f"  Warning: failed to fetch details for activity {activity_id}",
             file=sys.stderr,
         )
-        return {"description": "", "private_note": ""}
+        return {"description": "", "private_note": "", "gear_name": ""}
 
     if resp.status_code == 401:
-        return {"description": "", "private_note": ""}
+        return {"description": "", "private_note": "", "gear_name": ""}
 
     try:
         data = resp.json()
+        gear = data.get("gear") or {}
         return {
             "description": data.get("description") or "",
             "private_note": data.get("private_note") or "",
+            "gear_name": gear.get("name") or "",
         }
     except (ValueError, KeyError):
-        return {"description": "", "private_note": ""}
+        return {"description": "", "private_note": "", "gear_name": ""}
 
 
 def fetch_hr_stream(token, activity_id, quiet=False):
