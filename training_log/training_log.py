@@ -20,7 +20,8 @@ from .process import (
     compute_period_summary,
     group_days_by_month,
     group_days_by_week,
-    process_wellness,
+    merge_recovery,
+    process_wellness_sleep,
     process_workout,
     summary_tss_by_date,
 )
@@ -78,18 +79,37 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
 
 
 def _fetch_wellness(cfg, start, end, quiet):
-    """Fetch and process wellness data for each day in [start, end]."""
+    """Fetch and process wellness data for all days in [start, end].
+
+    Fetches the full date range in two calls (sleep + recovery) rather than looping
+    per day, then groups records by calendar date for assembly.
+    """
+    start_str = start.strftime("%Y-%m-%d")
+    end_str = end.strftime("%Y-%m-%d")
+
+    # Sleep returns NDJSON; group records by the date portion of each timestamp.
+    all_sleep = suunto.get_wellness_sleep(cfg, start_str, quiet=quiet)
+    sleep_by_date = {}
+    for record in all_sleep:
+        ts = record.get("timestamp", "")
+        if not ts:
+            continue
+        date_str = ts[:10]  # "2026-06-10" from "2026-06-10T01:42:00.000+02:00"
+        if start_str <= date_str <= end_str:
+            sleep_by_date.setdefault(date_str, []).append(record)
+
+    # Recovery is also range-based; result is {date: record} already grouped.
+    recovery_by_date = suunto.get_wellness_recovery(cfg, start_str, quiet=quiet)
+
     wellness_by_date = {}
     cur = start.date()
     last = end.date()
     while cur <= last:
         key = cur.isoformat()
-        sleep = suunto.get_sleep(cfg, key, quiet=quiet)
-        stages = suunto.get_sleep_stages(cfg, key, quiet=quiet)
-        recovery = suunto.get_recovery(cfg, key, quiet=quiet)
-        processed = process_wellness(sleep, stages, recovery)
-        if processed:
-            wellness_by_date[key] = processed
+        wellness = process_wellness_sleep(sleep_by_date.get(key, []))
+        if wellness:
+            merge_recovery(wellness, recovery_by_date.get(key))
+            wellness_by_date[key] = wellness
         cur += timedelta(days=1)
     return wellness_by_date
 

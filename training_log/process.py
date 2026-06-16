@@ -106,15 +106,28 @@ SUUNTO_SPORT_MAP = {
     "yoga": "Yoga",
 }
 
+# Suunto's internal numeric activityId values, observed from real API responses.
+# activityId 22 = outdoor run (has GPS polyline + step count).
+# activityId 29 = has ascent/descent, no distance GPS — likely strength/gym.
+# activityId 73 = no GPS/distance, indoor — likely gym/fitness.
+# Run `suuntool workouts get <key> --format json` on known workouts to confirm/extend.
+SUUNTO_ACTIVITY_ID_MAP = {
+    22: "Run",
+    29: "WeightTraining",
+    73: "WeightTraining",
+}
+
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 
 
-def normalise_sport(suunto_sport):
-    """Map a raw Suunto sport identifier to our internal sport key."""
-    if not suunto_sport:
+def normalise_sport(raw):
+    """Map a raw Suunto sport identifier (string or numeric activityId) to an internal key."""
+    if raw is None:
         return "Unknown"
-    key = str(suunto_sport).strip().lower().replace(" ", "_")
-    return SUUNTO_SPORT_MAP.get(key, suunto_sport)
+    if isinstance(raw, int):
+        return SUUNTO_ACTIVITY_ID_MAP.get(raw, f"Activity{raw}")
+    key = str(raw).strip().lower().replace(" ", "_")
+    return SUUNTO_SPORT_MAP.get(key, raw)
 
 
 def is_run_type(sport_type):
@@ -215,12 +228,14 @@ def _workout_start(workout):
 
 def process_workout(workout, hr_data, time_data, notes, cfg):
     """Process a single Suunto workout dict into an enriched, render-ready dict."""
-    raw_sport = _first(workout, "activityType", "sport", "sportType", "type")
+    # activityId (int) comes from the list; string names may come from workouts get.
+    raw_sport = _first(workout, "activityType", "sport", "sportType", "type", "activityId")
     sport = normalise_sport(raw_sport)
 
     distance_m = _first(workout, "totalDistance", "distance", default=0) or 0
+    # totalTime confirmed from workouts list; duration/movingTime may appear in workouts get.
     moving_time_s = int(
-        _first(workout, "duration", "movingTime", "moving_time", "totalTime", default=0) or 0
+        _first(workout, "totalTime", "duration", "movingTime", "moving_time", default=0) or 0
     )
     elevation = _first(workout, "totalAscent", "ascent", "elevationGain", default=0) or 0
     avg_hr = _first(workout, "avgHr", "averageHeartRate", "avgHeartRate", "average_heartrate")
@@ -276,73 +291,89 @@ def process_workout(workout, hr_data, time_data, notes, cfg):
 # Wellness processing
 # --------------------------------------------------------------------------------------
 
-def _pct(value):
-    """Normalise a 0–1 fraction or 0–100 value to an integer percentage, or None."""
-    if value is None:
-        return None
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return None
-    if v <= 1.0:
-        v *= 100
-    return round(v)
+def process_wellness_sleep(sleep_records):
+    """Process raw NDJSON sleep records for a single day into a wellness dict.
 
+    ``sleep_records`` is the list of raw records from ``suunto.get_wellness_sleep``
+    that share the same calendar date (from the ``timestamp`` field).
 
-def process_wellness(sleep, sleep_stages, recovery):
-    """Combine the three wellness payloads for one day into a single dict.
+    Confirmed field shapes (from real API output):
+    - ``entryData.duration`` — total sleep in seconds (float)
+    - ``entryData.deepSleepDuration / lightSleepDuration / remSleepDuration`` — seconds
+    - ``entryData.hrAvg / hrMin`` — beats *per second* (multiply × 60 for bpm)
+    - ``entryData.quality`` — 0–1 fraction (multiply × 100 for %)
+    - ``entryData.avgHrv`` — RMSSD in milliseconds
+    - ``entryData.sleepId`` — groups incremental updates for one session
+    - ``entryData.isNap`` — True for daytime naps (excluded)
 
-    Returns None if no usable data is present, so the renderer can omit the recovery
-    line entirely on days the watch wasn't worn.
+    Returns None if no usable main-sleep record is found.
     """
-    out = {}
-
-    # Recovery balance (Suunto's HRV-derived readiness), expressed 0–1 in raw JSON.
-    rec = _first(recovery or {}, "recovery", "recoveryBalance", "balance", "score")
-    out["recovery_pct"] = _pct(rec)
-
-    # Sleep duration / quality / sleeping HR.
-    dur = _first(sleep or {}, "sleepDuration", "duration", "totalSleep", "asleepTime")
-    out["sleep_duration_s"] = int(dur) if dur is not None else None
-    out["sleep_quality_pct"] = _pct(
-        _first(sleep or {}, "quality", "sleepQuality", "qualityIndex")
-    )
-    out["sleep_hr_avg"] = _first(sleep or {}, "avgHr", "averageHeartRate", "sleepHr")
-
-    # Optional raw HRV (Open Question #3) — included only if Suunto exposes it.
-    out["hrv_rmssd"] = _first(sleep or {}, "hrv", "rmssd", "hrvRmssd")
-
-    # Sleep-stage split, normalised to percentages of total sleep.
-    stages = sleep_stages or {}
-    deep = _first(stages, "deep", "deepSleep", "deepPct")
-    rem = _first(stages, "rem", "remSleep", "remPct")
-    light = _first(stages, "light", "lightSleep", "lightPct")
-    out["deep_pct"] = _stage_pct(deep, deep, rem, light)
-    out["rem_pct"] = _stage_pct(rem, deep, rem, light)
-    out["light_pct"] = _stage_pct(light, deep, rem, light)
-
-    if all(v is None for v in out.values()):
+    # Filter out naps.
+    main = [r for r in sleep_records if not r.get("entryData", {}).get("isNap", False)]
+    if not main:
         return None
-    return out
+
+    # De-duplicate by sleepId: for each session, keep the record with the largest
+    # duration (suuntool sends incremental updates; the final one is most complete).
+    by_id = {}
+    for r in main:
+        d = r.get("entryData", {})
+        sid = d.get("sleepId")
+        if sid is None:
+            continue
+        prev = by_id.get(sid)
+        if prev is None or d.get("duration", 0) > prev.get("entryData", {}).get("duration", 0):
+            by_id[sid] = r
+
+    if not by_id:
+        return None
+
+    # If multiple sleep sessions on one day (unusual), pick the longest.
+    best = max(by_id.values(), key=lambda r: r.get("entryData", {}).get("duration", 0))
+    d = best["entryData"]
+
+    duration_s = d.get("duration") or 0
+    if not duration_s:
+        return None
+
+    deep = d.get("deepSleepDuration") or 0
+    light = d.get("lightSleepDuration") or 0
+    rem = d.get("remSleepDuration") or 0
+    stages_total = deep + light + rem
+
+    # hrAvg is beats/second; × 60 → bpm.
+    hr_bps = d.get("hrAvg")
+    sleep_hr = round(hr_bps * 60) if hr_bps else None
+
+    return {
+        "recovery_pct": None,  # filled in later by merge_recovery()
+        "sleep_duration_s": int(duration_s),
+        "sleep_quality_pct": round(d["quality"] * 100) if d.get("quality") is not None else None,
+        "sleep_hr_avg": sleep_hr,
+        "hrv_rmssd": d.get("avgHrv"),  # RMSSD ms, directly usable
+        "deep_pct": round(deep / stages_total * 100) if stages_total else None,
+        "rem_pct": round(rem / stages_total * 100) if stages_total else None,
+        "light_pct": round(light / stages_total * 100) if stages_total else None,
+    }
 
 
-def _stage_pct(value, deep, rem, light):
-    """Return a sleep stage as a percentage of total sleep.
+def merge_recovery(wellness, recovery_record):
+    """Merge a recovery record into a wellness dict (modifies in-place, returns it).
 
-    Normalising by the total of the three stages handles every unit Suunto might use —
-    0–1 fractions, 0–100 percentages, or raw second counts — with one expression.
+    Recovery record shape is unverified — tolerant extraction is used.
     """
-    if value is None:
-        return None
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return None
-
-    total = sum(float(x) for x in (deep, rem, light) if x is not None)
-    if not total:
-        return None
-    return round(value / total * 100)
+    if not wellness or not recovery_record:
+        return wellness
+    entry = recovery_record.get("entryData") or recovery_record
+    score = _first(entry, "recovery", "recoveryBalance", "balance", "score", "value")
+    if score is not None:
+        try:
+            v = float(score)
+            # Suunto expresses recovery as 0–1; normalise to 0–100 %.
+            wellness["recovery_pct"] = round(v * 100) if v <= 1.0 else round(v)
+        except (TypeError, ValueError):
+            pass
+    return wellness
 
 
 # --------------------------------------------------------------------------------------
