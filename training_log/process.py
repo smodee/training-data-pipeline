@@ -103,21 +103,21 @@ SUUNTO_SPORT_MAP = {
     "gym": "WeightTraining",
     "strength_training": "WeightTraining",
     "weight_training": "WeightTraining",
+    "circuit_training": "CircuitTraining",
+    "climbing": "Climbing",
     "yoga": "Yoga",
 }
 
-# Suunto's internal numeric activityId values, observed from real API responses.
-# activityId 22 = outdoor run (has GPS polyline + step count).
-# activityId 29 = has ascent/descent, no distance GPS — likely strength/gym.
-# activityId 73 = no GPS/distance, indoor — likely gym/fitness.
-# Run `suuntool workouts get <key> --format json` on known workouts to confirm/extend.
+# Confirmed from real API responses (inspect_workouts.py output).
 SUUNTO_ACTIVITY_ID_MAP = {
-    22: "Run",
-    29: "WeightTraining",
-    73: "WeightTraining",
+    1: "Run",              # outdoor running with GPS
+    22: "TrailRun",        # trail running
+    29: "Climbing",        # rock climbing / finger training
+    73: "CircuitTraining", # S&C / circuit sessions
 }
 
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
+PACE_TYPES = RUN_TYPES  # sport types that display pace instead of speed
 
 
 def normalise_sport(raw):
@@ -242,6 +242,7 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
         _first(workout, "totalTime", "duration", "movingTime", "moving_time", default=0) or 0
     )
     elevation = _first(workout, "totalAscent", "ascent", "elevationGain", default=0) or 0
+    descent = _first(workout, "totalDescent", "descent", "elevationLoss", default=0) or 0
     avg_hr = _first(workout, "avgHr", "averageHeartRate", "avgHeartRate", "average_heartrate")
     max_hr = _first(workout, "maxHr", "maxHeartRate", "max_heartrate")
     avg_cadence = _first(workout, "avgCadence", "averageCadence")
@@ -268,6 +269,7 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
         "moving_time_s": moving_time_s,
         "moving_time_fmt": f"{moving_time_s // 3600}:{(moving_time_s % 3600) // 60:02d}",
         "elevation_gain": round(elevation) if elevation else 0,
+        "elevation_descent": round(descent) if descent else 0,
         "avg_hr": avg_hr,
         "max_hr": max_hr,
         "avg_cadence": avg_cadence,

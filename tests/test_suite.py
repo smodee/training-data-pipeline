@@ -292,9 +292,10 @@ class TestPaceSpeedVam(unittest.TestCase):
 class TestNormaliseSport(unittest.TestCase):
 
     def test_known_int_activity_id(self):
-        self.assertEqual(normalise_sport(22), "Run")
-        self.assertEqual(normalise_sport(29), "WeightTraining")
-        self.assertEqual(normalise_sport(73), "WeightTraining")
+        self.assertEqual(normalise_sport(1), "Run")
+        self.assertEqual(normalise_sport(22), "TrailRun")
+        self.assertEqual(normalise_sport(29), "Climbing")
+        self.assertEqual(normalise_sport(73), "CircuitTraining")
 
     def test_unknown_int_passthrough(self):
         self.assertEqual(normalise_sport(999), "Activity999")
@@ -370,7 +371,7 @@ class TestProcessWorkout(unittest.TestCase):
         return default_cfg()
 
     def test_basic_run(self):
-        w = make_workout()
+        w = make_workout(activityId=1)  # activityId 1 = Run
         result = process_workout(w, None, None, "", self._cfg())
         self.assertEqual(result["sport_type"], "Run")
         self.assertEqual(result["distance_km"], 10.0)
@@ -402,9 +403,14 @@ class TestProcessWorkout(unittest.TestCase):
     def test_gym_no_pace_no_speed(self):
         w = make_workout(activityId=73, totalDistance=0)
         result = process_workout(w, None, None, "", self._cfg())
-        self.assertEqual(result["sport_type"], "WeightTraining")
+        self.assertEqual(result["sport_type"], "CircuitTraining")
         self.assertIsNone(result["pace"])
         self.assertIsNone(result["speed"])
+
+    def test_descent_extracted(self):
+        w = make_workout(activityId=22, totalDescent=250)
+        result = process_workout(w, None, None, "", self._cfg())
+        self.assertEqual(result["elevation_descent"], 250)
 
     def test_date_extracted_from_epoch_ms(self):
         # startTime 1748000000000 ms → date check (just ensure it's a valid date string)

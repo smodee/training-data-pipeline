@@ -26,6 +26,8 @@ SPORT_LABELS = {
     "AlpineSki": "alpine ski",
     "Snowboard": "snowboard",
     "WeightTraining": "weight training",
+    "CircuitTraining": "circuit training",
+    "Climbing": "climbing",
     "Yoga": "yoga",
 }
 
@@ -183,14 +185,28 @@ def _render_recovery_line(wellness):
 
 def _render_workout(workout):
     """Render a single workout block (### heading + metric bullets)."""
-    lines = [f"### {workout['name']} ({_sport_label(workout['sport_type'])})", ""]
+    name = workout["name"]
+    sport = workout["sport_type"]
+    sport_lbl = _sport_label(sport)
+    # When name is the sport-type key (i.e. no custom name was found in the API),
+    # show just the human sport label rather than the redundant "Key (label)" form.
+    if name and name != sport:
+        heading = f"{name} ({sport_lbl})"
+    else:
+        heading = sport_lbl.title()
+    lines = [f"### {heading}", ""]
 
     metrics = []
     if workout["distance_km"]:
         metrics.append(f"Distance: {workout['distance_km']} km")
     metrics.append(f"Moving time: {workout['moving_time_fmt']}")
-    if workout["elevation_gain"]:
-        metrics.append(f"Elevation: +{workout['elevation_gain']} m")
+    asc = workout["elevation_gain"]
+    desc = workout.get("elevation_descent", 0)
+    if asc or desc:
+        elev = f"+{asc} m"
+        if desc:
+            elev += f" / -{desc} m"
+        metrics.append(f"Elevation: {elev}")
     lines.append(f"- {' | '.join(metrics)}")
 
     secondary = []
