@@ -138,13 +138,17 @@ def is_run_type(sport_type):
 # TSS / EPOC extraction
 # --------------------------------------------------------------------------------------
 
-def extract_tss(workout, hr_data, time_data, moving_time_s, avg_hr, cfg):
+def extract_tss(workout, hr_data, time_data, moving_time_s, avg_hr, cfg, fit_tss=None):
     """Return TSS for a workout.
 
-    Prefers a native value from the Suunto object (Open Question #1: confirm the field
-    name). Falls back to an hrTSS estimate from average HR vs. threshold HR when no
-    native value is present.
+    Priority: FIT session message > Suunto JSON field > hrTSS estimate.
+    FIT's training_stress_score is the most reliable source — it's what Suunto
+    calculates and stores in the file. The JSON summary may also carry it; hrTSS
+    is a fallback when neither is present.
     """
+    if fit_tss is not None:
+        return fit_tss
+
     native = _first(
         workout, "tss", "trainingStressScore", "training_stress_score", "trainingStress"
     )
@@ -226,7 +230,7 @@ def _workout_start(workout):
     return parse_date(str(raw))
 
 
-def process_workout(workout, hr_data, time_data, notes, cfg):
+def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
     """Process a single Suunto workout dict into an enriched, render-ready dict."""
     # activityId (int) comes from the list; string names may come from workouts get.
     raw_sport = _first(workout, "activityType", "sport", "sportType", "type", "activityId")
@@ -241,6 +245,14 @@ def process_workout(workout, hr_data, time_data, notes, cfg):
     avg_hr = _first(workout, "avgHr", "averageHeartRate", "avgHeartRate", "average_heartrate")
     max_hr = _first(workout, "maxHr", "maxHeartRate", "max_heartrate")
     avg_cadence = _first(workout, "avgCadence", "averageCadence")
+
+    # The Suunto workout JSON carries no HR fields, so derive avg/max from the FIT
+    # stream when available. This also feeds the hrTSS estimate below.
+    if hr_data:
+        if avg_hr is None:
+            avg_hr = round(sum(hr_data) / len(hr_data))
+        if max_hr is None:
+            max_hr = max(hr_data)
 
     start_dt = _workout_start(workout)
 
@@ -283,7 +295,7 @@ def process_workout(workout, hr_data, time_data, notes, cfg):
         result["zone_seconds"] = None
         result["zone_pct"] = None
 
-    result["tss"] = extract_tss(workout, hr_data, time_data, moving_time_s, avg_hr, cfg)
+    result["tss"] = extract_tss(workout, hr_data, time_data, moving_time_s, avg_hr, cfg, fit_tss=fit_tss)
 
     return result
 

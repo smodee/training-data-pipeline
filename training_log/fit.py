@@ -14,15 +14,17 @@ import sys
 
 
 def parse_fit(fit_path):
-    """Parse a FIT file and return ``(hr_data, time_data, description)``.
+    """Parse a FIT file and return ``(hr_data, time_data, description, tss)``.
 
     ``hr_data`` and ``time_data`` are parallel lists (bpm / seconds-elapsed), or
     ``(None, None)`` if no HR records are found.
     ``description`` is the workout's free-text notes string, or ``""`` if absent.
+    ``tss`` is the training stress score from the FIT session message, or ``None``.
 
     Confirmed from real Suunto FIT output: the description is stored as a field
     named ``"description"`` on one of the FIT messages (visible as a developer
-    data field in the binary export).
+    data field in the binary export). TSS is stored as ``training_stress_score``
+    on the session message.
     """
     try:
         from fitparse import FitFile
@@ -32,13 +34,14 @@ def parse_fit(fit_path):
             "Install with 'pip install fitparse'.",
             file=sys.stderr,
         )
-        return None, None, ""
+        return None, None, "", None
 
     try:
         fitfile = FitFile(fit_path)
         timestamps = []
         heartrates = []
         description = ""
+        tss = None
 
         for message in fitfile.get_messages():
             if message.name == "record":
@@ -48,6 +51,15 @@ def parse_fit(fit_path):
                 if hr is not None and ts is not None:
                     heartrates.append(hr)
                     timestamps.append(ts)
+
+            if message.name == "session":
+                values = {d.name: d.value for d in message}
+                raw_tss = values.get("training_stress_score")
+                if raw_tss is not None:
+                    try:
+                        tss = round(float(raw_tss))
+                    except (TypeError, ValueError):
+                        pass
 
             # Description may appear on any message type as a developer data field.
             if not description:
@@ -60,7 +72,7 @@ def parse_fit(fit_path):
 
     except Exception as e:
         print(f"  Warning: failed to parse FIT file {fit_path}: {e}", file=sys.stderr)
-        return None, None, ""
+        return None, None, "", None
 
     hr_data, time_data = None, None
     if heartrates and timestamps:
@@ -68,4 +80,4 @@ def parse_fit(fit_path):
         time_data = [int((t - t0).total_seconds()) for t in timestamps]
         hr_data = heartrates
 
-    return hr_data, time_data, description
+    return hr_data, time_data, description, tss
