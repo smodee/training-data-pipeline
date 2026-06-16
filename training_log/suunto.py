@@ -227,20 +227,26 @@ def get_wellness_sleep(cfg, since_date, quiet=False):
 
 
 def get_wellness_recovery(cfg, since_date, quiet=False):
-    """Fetch recovery data since ``since_date`` and group it by date.
+    """Fetch recovery data since ``since_date`` and return the peak balance per day.
 
-    Returns ``{YYYY-MM-DD: raw_record}``.
+    The API returns a reading every 30 minutes throughout the day. The peak (max)
+    balance for each calendar day corresponds to the morning readiness value — what
+    Suunto shows on the watch face after overnight recovery processing.
+
+    Returns ``{YYYY-MM-DD: {"balance": float}}`` (0–1 scale).
 
     CLI: suuntool wellness recovery --since <date>
-
-    NOTE: If this command writes to a directory (``--out ./dir``) rather than stdout,
-    the return value will be {} and recovery data will simply be omitted from reports
-    — non-fatal. Adjust the command here once confirmed.
     """
     records = _run_ndjson(cfg, ["wellness", "recovery", "--since", since_date], quiet=quiet)
-    by_date = {}
+    max_by_date = {}
     for r in records:
         ts = r.get("timestamp", "")
-        if ts:
-            by_date[ts[:10]] = r
-    return by_date
+        if not ts:
+            continue
+        date_str = ts[:10]
+        balance = (r.get("entryData") or {}).get("balance")
+        if balance is None:
+            continue
+        if date_str not in max_by_date or balance > max_by_date[date_str]:
+            max_by_date[date_str] = balance
+    return {d: {"balance": b} for d, b in max_by_date.items()}

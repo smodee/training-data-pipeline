@@ -245,8 +245,9 @@ def process_workout(workout, hr_data, time_data, notes, cfg):
     start_dt = _workout_start(workout)
 
     result = {
-        "id": _first(workout, "id", "workoutId", "key"),
-        "name": _first(workout, "name", "title", default="Untitled"),
+        "id": _first(workout, "key", "id", "workoutId"),
+        # workouts get/list return no name field; default to the sport type.
+        "name": _first(workout, "name", "title") or sport,
         "notes": (notes or "").strip(),
         "sport_type": sport,
         "date": start_dt.strftime("%Y-%m-%d"),

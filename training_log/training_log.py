@@ -62,9 +62,10 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
         print(f"Found {len(raw)} workout(s). Processing...")
 
     processed = []
-    for summary in raw:
-        workout_id = suunto._first(summary, "id", "workoutId", "key")
-        detail = suunto.get_workout(cfg, workout_id, quiet=quiet) or summary
+    for workout in raw:
+        # workouts get returns identical data to the list, so we skip the extra
+        # per-workout API call and use the list item directly.
+        workout_id = suunto._first(workout, "key", "id", "workoutId")
         notes = suunto.get_workout_notes(cfg, workout_id, quiet=quiet)
 
         hr_data, time_data = None, None
@@ -73,7 +74,7 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
             if fit_path:
                 hr_data, time_data = parse_hr_stream(fit_path)
 
-        processed.append(process_workout(detail, hr_data, time_data, notes, cfg))
+        processed.append(process_workout(workout, hr_data, time_data, notes, cfg))
 
     return processed
 
