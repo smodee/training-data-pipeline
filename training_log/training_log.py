@@ -14,7 +14,7 @@ from dateutil.parser import parse as parse_date
 
 from . import suunto, tss_store
 from .config import load_config
-from .fit import parse_hr_stream
+from .fit import parse_fit
 from .process import (
     build_days,
     compute_period_summary,
@@ -66,13 +66,17 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
         # workouts get returns identical data to the list, so we skip the extra
         # per-workout API call and use the list item directly.
         workout_id = suunto._first(workout, "key", "id", "workoutId")
-        notes = suunto.get_workout_notes(cfg, workout_id, quiet=quiet)
 
-        hr_data, time_data = None, None
+        hr_data, time_data, notes = None, None, ""
         if not no_fit:
             fit_path = suunto.download_fit(cfg, workout_id, quiet=quiet)
             if fit_path:
-                hr_data, time_data = parse_hr_stream(fit_path)
+                # Description lives in the FIT file; extract it in the same pass as HR.
+                hr_data, time_data, notes = parse_fit(fit_path)
+
+        # Fall back to workouts comments if FIT description was empty or --no-fit.
+        if not notes:
+            notes = suunto.get_workout_notes(cfg, workout_id, quiet=quiet)
 
         processed.append(process_workout(workout, hr_data, time_data, notes, cfg))
 
