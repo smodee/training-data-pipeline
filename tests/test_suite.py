@@ -293,8 +293,11 @@ class TestNormaliseSport(unittest.TestCase):
 
     def test_known_int_activity_id(self):
         self.assertEqual(normalise_sport(1), "Run")
+        self.assertEqual(normalise_sport(11), "Hike")
         self.assertEqual(normalise_sport(22), "TrailRun")
         self.assertEqual(normalise_sport(29), "Climbing")
+        self.assertEqual(normalise_sport(51), "YogaFlexibility")
+        self.assertEqual(normalise_sport(66), "DiscGolf")
         self.assertEqual(normalise_sport(73), "CircuitTraining")
 
     def test_unknown_int_passthrough(self):

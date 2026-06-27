@@ -111,8 +111,11 @@ SUUNTO_SPORT_MAP = {
 # Confirmed from real API responses (inspect_workouts.py output).
 SUUNTO_ACTIVITY_ID_MAP = {
     1: "Run",              # outdoor running with GPS
+    11: "Hike",            # hiking
     22: "TrailRun",        # trail running
     29: "Climbing",        # rock climbing / finger training
+    51: "YogaFlexibility", # yoga/pilates, used for mobility/flexibility
+    66: "DiscGolf",        # disc golf
     73: "CircuitTraining", # S&C / circuit sessions
 }
 

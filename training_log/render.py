@@ -29,6 +29,8 @@ SPORT_LABELS = {
     "CircuitTraining": "circuit training",
     "Climbing": "climbing",
     "Yoga": "yoga",
+    "YogaFlexibility": "yoga/flexibility",
+    "DiscGolf": "disc golf",
 }
 
 
