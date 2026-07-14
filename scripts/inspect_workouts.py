@@ -47,13 +47,14 @@ def main():
         key = suunto._first(w, "key", "id", "workoutId")
 
         desc = ""
+        fit_sport = None
         if not no_fit and key:
             fit_path = suunto.download_fit(cfg, key, quiet=True)
             if fit_path:
-                _, _, desc, _ = parse_fit(fit_path)
+                _, _, desc, _, fit_sport = parse_fit(fit_path)
 
         print(
-            f"activityId {str(aid):>4} | {_start_str(w)} "
+            f"activityId {str(aid):>4} | fit_sport {str(fit_sport):>22} | {_start_str(w)} "
             f"| {dur_s // 60:>4} min | {dist_m / 1000:>5.1f} km | +{int(asc):>4} m "
             f"| desc: {desc!r}"
         )
