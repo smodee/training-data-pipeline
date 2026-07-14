@@ -32,6 +32,7 @@ from training_log.process import (
     normalise_sport,
     process_wellness_sleep,
     process_workout,
+    sleep_day,
     summary_tss_by_date,
     zone_seconds_to_pct,
 )
@@ -75,7 +76,7 @@ def make_workout(**overrides):
 
 
 def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, rem=900,
-                      hr_avg=0.93, is_nap=False):
+                      hr_avg=0.93, hr_min=0.85, is_nap=False):
     return {
         "timestamp": "2026-06-10T01:42:00.000+02:00",
         "entryData": {
@@ -86,6 +87,7 @@ def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, r
             "lightSleepDuration": light,
             "remSleepDuration": rem,
             "hrAvg": hr_avg,
+            "hrMin": hr_min,
             "avgHrv": 38.5,
             "isNap": is_nap,
         },
@@ -506,11 +508,41 @@ class TestProcessWellnessSleep(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["sleep_duration_s"], 25200)
 
+    def test_after_midnight_bedtime_stays_same_day(self):
+        # A 01:42 bedtime belongs to that morning's sleep day.
+        rec = {"timestamp": "2026-06-10T01:42:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-10")
+
+    def test_evening_bedtime_counts_toward_next_day(self):
+        # A 23:01 bedtime is the night you wake the *next* morning — the real bug:
+        # grouping by the raw date (06-08) collided two nights and blanked 06-09.
+        rec = {"timestamp": "2026-06-08T23:01:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-09")
+
+    def test_evening_bedtime_rolls_month_boundary(self):
+        rec = {"timestamp": "2026-06-30T22:30:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-07-01")
+
+    def test_sleep_day_none_without_timestamp(self):
+        self.assertIsNone(sleep_day({"entryData": {}}))
+
     def test_hr_avg_converted_from_bps(self):
         # hr_avg=0.93 beats/sec → 0.93*60 = 55.8 → 56 bpm
         records = [make_sleep_record("s1", duration=25200, hr_avg=0.93)]
         result = process_wellness_sleep(records)
         self.assertEqual(result["sleep_hr_avg"], round(0.93 * 60))
+
+    def test_resting_hr_from_hr_min_bps(self):
+        # hrMin (lowest sleeping HR) is the resting-HR proxy: 0.85 bps → 51 bpm.
+        records = [make_sleep_record("s1", duration=25200, hr_min=0.85)]
+        result = process_wellness_sleep(records)
+        self.assertEqual(result["resting_hr"], round(0.85 * 60))
+
+    def test_resting_hr_none_when_absent(self):
+        rec = make_sleep_record("s1", duration=25200)
+        del rec["entryData"]["hrMin"]
+        result = process_wellness_sleep([rec])
+        self.assertIsNone(result["resting_hr"])
 
     def test_quality_converted_from_fraction(self):
         records = [make_sleep_record("s1", duration=25200, quality=0.80)]
@@ -1039,12 +1071,19 @@ class TestRenderHelpers(unittest.TestCase):
             "deep_pct": 22,
             "rem_pct": 19,
             "hrv_rmssd": 38.5,
+            "resting_hr": 51,
         }
         line = _render_recovery_line(wellness)
         self.assertIn("**Recovery:**", line)
         self.assertIn("80%", line)
         self.assertIn("7h00", line)
         self.assertIn("HRV: 38 ms", line)  # round(38.5) == 38 in Python 3 (banker's rounding)
+        self.assertIn("RHR: 51 bpm", line)
+
+    def test_render_recovery_line_omits_rhr_when_absent(self):
+        # No resting_hr key → no RHR segment (other fields still render).
+        line = _render_recovery_line({"recovery_pct": 70, "hrv_rmssd": 40})
+        self.assertNotIn("RHR", line)
 
     def test_render_recovery_line_none_on_no_data(self):
         self.assertIsNone(_render_recovery_line(None))
@@ -1079,6 +1118,35 @@ class TestRenderHelpers(unittest.TestCase):
         self.assertIn("EPOC: 42", full)
         self.assertIn("Felt great", full)
         self.assertIn("Z2 65.0%", full)
+
+    def test_render_workout_heading_gets_start_time(self):
+        # No custom name (name == sport): heading = sport label + start time.
+        def wk(hour, minute):
+            return {
+                "name": "Hike", "sport_type": "Hike",
+                "start_dt": datetime.fromisoformat(f"2026-06-08T{hour:02d}:{minute:02d}:00"),
+                "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+                "elevation_gain": 0, "avg_hr": None, "max_hr": None,
+                "has_heartrate": False, "pace": None, "speed": None, "vam": None,
+                "zone_pct": None, "tss": None, "epoc": None, "notes": "", "avg_cadence": None,
+            }
+        self.assertIn("### Hike (09:18)", "\n".join(_render_workout(wk(9, 18))))
+        self.assertIn("### Hike (23:02)", "\n".join(_render_workout(wk(23, 2))))
+
+    def test_render_workout_start_time_orders_multi_session_day(self):
+        # Two sessions the same day get distinct, correctly-ordered start times.
+        base = {
+            "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+            "elevation_gain": 0, "avg_hr": None, "max_hr": None, "has_heartrate": False,
+            "pace": None, "speed": None, "vam": None, "zone_pct": None, "tss": None,
+            "epoc": None, "notes": "", "avg_cadence": None,
+        }
+        am = {**base, "name": "Hike", "sport_type": "Hike",
+              "start_dt": datetime.fromisoformat("2026-06-08T09:00:00")}
+        pm = {**base, "name": "Climbing", "sport_type": "Climbing",
+              "start_dt": datetime.fromisoformat("2026-06-08T15:00:00")}
+        self.assertIn("### Hike (09:00)", "\n".join(_render_workout(am)))
+        self.assertIn("### Climbing (15:00)", "\n".join(_render_workout(pm)))
 
     def test_render_day_rest_day(self):
         day = {

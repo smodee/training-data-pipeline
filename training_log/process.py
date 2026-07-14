@@ -367,6 +367,34 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_s
 # Wellness processing
 # --------------------------------------------------------------------------------------
 
+# Sessions that start at or after this local hour are evening bedtimes that belong to
+# the *next* morning's sleep day; earlier starts (after-midnight bedtimes, or naps) stay
+# on the same date. A midday cutoff cleanly separates evening from after-midnight starts.
+_EVENING_BEDTIME_HOUR = 12
+
+
+def sleep_day(record):
+    """Return the calendar day (``YYYY-MM-DD``) a sleep record belongs to.
+
+    Suunto timestamps a sleep session at its *start* (bedtime). Grouping by the raw
+    timestamp date attributes nights inconsistently: a pre-midnight bedtime lands on the
+    day before you wake, so two nights collide on one date while the next day shows none
+    — silent misattribution (and the colliding day then renders the wrong night). We
+    normalise every session to its wake morning: an evening bedtime (local hour >=
+    :data:`_EVENING_BEDTIME_HOUR`) counts toward the next calendar day; an after-midnight
+    bedtime stays on the same date. Being duration-independent, partial updates of one
+    session never split across days. Returns ``None`` if the record has no timestamp.
+    """
+    ts = record.get("timestamp")
+    if not ts:
+        return None
+    dt = parse_date(ts)
+    d = dt.date()
+    if dt.hour >= _EVENING_BEDTIME_HOUR:
+        d = d + timedelta(days=1)
+    return d.isoformat()
+
+
 def process_wellness_sleep(sleep_records):
     """Process raw NDJSON sleep records for a single day into a wellness dict.
 
@@ -417,15 +445,20 @@ def process_wellness_sleep(sleep_records):
     rem = d.get("remSleepDuration") or 0
     stages_total = deep + light + rem
 
-    # hrAvg is beats/second; × 60 → bpm.
+    # hrAvg / hrMin are beats/second; × 60 → bpm. hrMin (lowest sleeping HR) is the
+    # conventional resting-HR proxy — Suunto exposes no dedicated resting-HR field in
+    # either the sleep or recovery data.
     hr_bps = d.get("hrAvg")
     sleep_hr = round(hr_bps * 60) if hr_bps else None
+    hr_min_bps = d.get("hrMin")
+    resting_hr = round(hr_min_bps * 60) if hr_min_bps else None
 
     return {
         "recovery_pct": None,  # filled in later by merge_recovery()
         "sleep_duration_s": int(duration_s),
         "sleep_quality_pct": round(d["quality"] * 100) if d.get("quality") is not None else None,
         "sleep_hr_avg": sleep_hr,
+        "resting_hr": resting_hr,
         "hrv_rmssd": d.get("avgHrv"),  # RMSSD ms, directly usable
         "deep_pct": round(deep / stages_total * 100) if stages_total else None,
         "rem_pct": round(rem / stages_total * 100) if stages_total else None,
