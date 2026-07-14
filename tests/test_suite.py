@@ -32,6 +32,7 @@ from training_log.process import (
     normalise_sport,
     process_wellness_sleep,
     process_workout,
+    sleep_day,
     summary_tss_by_date,
     zone_seconds_to_pct,
 )
@@ -506,6 +507,24 @@ class TestProcessWellnessSleep(unittest.TestCase):
         result = process_wellness_sleep(records)
         self.assertIsNotNone(result)
         self.assertEqual(result["sleep_duration_s"], 25200)
+
+    def test_after_midnight_bedtime_stays_same_day(self):
+        # A 01:42 bedtime belongs to that morning's sleep day.
+        rec = {"timestamp": "2026-06-10T01:42:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-10")
+
+    def test_evening_bedtime_counts_toward_next_day(self):
+        # A 23:01 bedtime is the night you wake the *next* morning — the real bug:
+        # grouping by the raw date (06-08) collided two nights and blanked 06-09.
+        rec = {"timestamp": "2026-06-08T23:01:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-09")
+
+    def test_evening_bedtime_rolls_month_boundary(self):
+        rec = {"timestamp": "2026-06-30T22:30:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-07-01")
+
+    def test_sleep_day_none_without_timestamp(self):
+        self.assertIsNone(sleep_day({"entryData": {}}))
 
     def test_hr_avg_converted_from_bps(self):
         # hr_avg=0.93 beats/sec → 0.93*60 = 55.8 → 56 bpm

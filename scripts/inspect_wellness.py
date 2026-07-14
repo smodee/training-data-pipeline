@@ -12,7 +12,7 @@ sys.path.insert(0, ".")
 
 from training_log.config import load_config
 from training_log import suunto
-from training_log.process import process_wellness_sleep, merge_recovery
+from training_log.process import process_wellness_sleep, merge_recovery, sleep_day
 
 
 def main():
@@ -28,9 +28,9 @@ def main():
 
     by_date = defaultdict(list)
     for r in sleep:
-        ts = r.get("timestamp", "")
-        if ts and since <= ts[:10] <= until:
-            by_date[ts[:10]].append(r)
+        day = sleep_day(r)  # attribute to wake morning, not raw bedtime timestamp
+        if day and since <= day <= until:
+            by_date[day].append(r)
 
     print(f"\nProcessed wellness {since} .. {until}:\n")
     for date in sorted(by_date):

@@ -367,6 +367,34 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_s
 # Wellness processing
 # --------------------------------------------------------------------------------------
 
+# Sessions that start at or after this local hour are evening bedtimes that belong to
+# the *next* morning's sleep day; earlier starts (after-midnight bedtimes, or naps) stay
+# on the same date. A midday cutoff cleanly separates evening from after-midnight starts.
+_EVENING_BEDTIME_HOUR = 12
+
+
+def sleep_day(record):
+    """Return the calendar day (``YYYY-MM-DD``) a sleep record belongs to.
+
+    Suunto timestamps a sleep session at its *start* (bedtime). Grouping by the raw
+    timestamp date attributes nights inconsistently: a pre-midnight bedtime lands on the
+    day before you wake, so two nights collide on one date while the next day shows none
+    — silent misattribution (and the colliding day then renders the wrong night). We
+    normalise every session to its wake morning: an evening bedtime (local hour >=
+    :data:`_EVENING_BEDTIME_HOUR`) counts toward the next calendar day; an after-midnight
+    bedtime stays on the same date. Being duration-independent, partial updates of one
+    session never split across days. Returns ``None`` if the record has no timestamp.
+    """
+    ts = record.get("timestamp")
+    if not ts:
+        return None
+    dt = parse_date(ts)
+    d = dt.date()
+    if dt.hour >= _EVENING_BEDTIME_HOUR:
+        d = d + timedelta(days=1)
+    return d.isoformat()
+
+
 def process_wellness_sleep(sleep_records):
     """Process raw NDJSON sleep records for a single day into a wellness dict.
 

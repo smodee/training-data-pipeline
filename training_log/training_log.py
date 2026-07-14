@@ -23,6 +23,7 @@ from .process import (
     merge_recovery,
     process_wellness_sleep,
     process_workout,
+    sleep_day,
     summary_tss_by_date,
 )
 from .render import (
@@ -96,15 +97,16 @@ def _fetch_wellness(cfg, start, end, quiet):
     start_str = start.strftime("%Y-%m-%d")
     end_str = end.strftime("%Y-%m-%d")
 
-    # Sleep returns NDJSON; group records by the date portion of each timestamp.
-    all_sleep = suunto.get_wellness_sleep(cfg, start_str, quiet=quiet)
+    # Sleep returns NDJSON; group each session by the day it belongs to (its wake
+    # morning), not its raw bedtime timestamp — see process.sleep_day. Fetch from one day
+    # earlier so the first in-range day's pre-midnight bedtime (timestamped the previous
+    # evening) is still captured.
+    fetch_since = (start.date() - timedelta(days=1)).isoformat()
+    all_sleep = suunto.get_wellness_sleep(cfg, fetch_since, quiet=quiet)
     sleep_by_date = {}
     for record in all_sleep:
-        ts = record.get("timestamp", "")
-        if not ts:
-            continue
-        date_str = ts[:10]  # "2026-06-10" from "2026-06-10T01:42:00.000+02:00"
-        if start_str <= date_str <= end_str:
+        date_str = sleep_day(record)
+        if date_str and start_str <= date_str <= end_str:
             sleep_by_date.setdefault(date_str, []).append(record)
 
     # Recovery is also range-based; result is {date: record} already grouped.
