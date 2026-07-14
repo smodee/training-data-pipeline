@@ -193,12 +193,16 @@ def _render_workout(workout):
     name = workout["name"]
     sport = workout["sport_type"]
     sport_lbl = _sport_label(sport)
-    # When name is the sport-type key (i.e. no custom name was found in the API),
-    # show just the human sport label rather than the redundant "Key (label)" form.
+    start_dt = workout.get("start_dt")
+    # When name is the sport-type key (i.e. no custom name was found in the API), show the
+    # human sport label and append the start time — Suunto provides no activity name, so
+    # this gives an ordering cue for days with multiple sessions (already sorted by time).
     if name and name != sport:
         heading = f"{name} ({sport_lbl})"
     else:
         heading = sport_lbl.title()
+        if start_dt is not None:
+            heading = f"{heading} ({start_dt.strftime('%H:%M')})"
     lines = [f"### {heading}", ""]
 
     metrics = []

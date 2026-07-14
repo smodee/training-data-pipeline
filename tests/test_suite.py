@@ -1119,6 +1119,35 @@ class TestRenderHelpers(unittest.TestCase):
         self.assertIn("Felt great", full)
         self.assertIn("Z2 65.0%", full)
 
+    def test_render_workout_heading_gets_start_time(self):
+        # No custom name (name == sport): heading = sport label + start time.
+        def wk(hour, minute):
+            return {
+                "name": "Hike", "sport_type": "Hike",
+                "start_dt": datetime.fromisoformat(f"2026-06-08T{hour:02d}:{minute:02d}:00"),
+                "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+                "elevation_gain": 0, "avg_hr": None, "max_hr": None,
+                "has_heartrate": False, "pace": None, "speed": None, "vam": None,
+                "zone_pct": None, "tss": None, "epoc": None, "notes": "", "avg_cadence": None,
+            }
+        self.assertIn("### Hike (09:18)", "\n".join(_render_workout(wk(9, 18))))
+        self.assertIn("### Hike (23:02)", "\n".join(_render_workout(wk(23, 2))))
+
+    def test_render_workout_start_time_orders_multi_session_day(self):
+        # Two sessions the same day get distinct, correctly-ordered start times.
+        base = {
+            "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+            "elevation_gain": 0, "avg_hr": None, "max_hr": None, "has_heartrate": False,
+            "pace": None, "speed": None, "vam": None, "zone_pct": None, "tss": None,
+            "epoc": None, "notes": "", "avg_cadence": None,
+        }
+        am = {**base, "name": "Hike", "sport_type": "Hike",
+              "start_dt": datetime.fromisoformat("2026-06-08T09:00:00")}
+        pm = {**base, "name": "Climbing", "sport_type": "Climbing",
+              "start_dt": datetime.fromisoformat("2026-06-08T15:00:00")}
+        self.assertIn("### Hike (09:00)", "\n".join(_render_workout(am)))
+        self.assertIn("### Climbing (15:00)", "\n".join(_render_workout(pm)))
+
     def test_render_day_rest_day(self):
         day = {
             "date": "2026-06-01",
