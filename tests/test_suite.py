@@ -75,7 +75,7 @@ def make_workout(**overrides):
 
 
 def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, rem=900,
-                      hr_avg=0.93, is_nap=False):
+                      hr_avg=0.93, hr_min=0.85, is_nap=False):
     return {
         "timestamp": "2026-06-10T01:42:00.000+02:00",
         "entryData": {
@@ -86,6 +86,7 @@ def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, r
             "lightSleepDuration": light,
             "remSleepDuration": rem,
             "hrAvg": hr_avg,
+            "hrMin": hr_min,
             "avgHrv": 38.5,
             "isNap": is_nap,
         },
@@ -511,6 +512,18 @@ class TestProcessWellnessSleep(unittest.TestCase):
         records = [make_sleep_record("s1", duration=25200, hr_avg=0.93)]
         result = process_wellness_sleep(records)
         self.assertEqual(result["sleep_hr_avg"], round(0.93 * 60))
+
+    def test_resting_hr_from_hr_min_bps(self):
+        # hrMin (lowest sleeping HR) is the resting-HR proxy: 0.85 bps → 51 bpm.
+        records = [make_sleep_record("s1", duration=25200, hr_min=0.85)]
+        result = process_wellness_sleep(records)
+        self.assertEqual(result["resting_hr"], round(0.85 * 60))
+
+    def test_resting_hr_none_when_absent(self):
+        rec = make_sleep_record("s1", duration=25200)
+        del rec["entryData"]["hrMin"]
+        result = process_wellness_sleep([rec])
+        self.assertIsNone(result["resting_hr"])
 
     def test_quality_converted_from_fraction(self):
         records = [make_sleep_record("s1", duration=25200, quality=0.80)]
@@ -1039,12 +1052,19 @@ class TestRenderHelpers(unittest.TestCase):
             "deep_pct": 22,
             "rem_pct": 19,
             "hrv_rmssd": 38.5,
+            "resting_hr": 51,
         }
         line = _render_recovery_line(wellness)
         self.assertIn("**Recovery:**", line)
         self.assertIn("80%", line)
         self.assertIn("7h00", line)
         self.assertIn("HRV: 38 ms", line)  # round(38.5) == 38 in Python 3 (banker's rounding)
+        self.assertIn("RHR: 51 bpm", line)
+
+    def test_render_recovery_line_omits_rhr_when_absent(self):
+        # No resting_hr key → no RHR segment (other fields still render).
+        line = _render_recovery_line({"recovery_pct": 70, "hrv_rmssd": 40})
+        self.assertNotIn("RHR", line)
 
     def test_render_recovery_line_none_on_no_data(self):
         self.assertIsNone(_render_recovery_line(None))

@@ -47,6 +47,7 @@ def main():
             f"| quality {w['sleep_quality_pct']}% "
             f"| recovery {w['recovery_pct']}% "
             f"| HR {w['sleep_hr_avg']} bpm "
+            f"| RHR {w['resting_hr']} bpm "
             f"| HRV {w['hrv_rmssd']} "
             f"| deep {w['deep_pct']}% / rem {w['rem_pct']}% / light {w['light_pct']}% "
             f"| ({len(records)} raw record(s) merged)"

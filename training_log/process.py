@@ -417,15 +417,20 @@ def process_wellness_sleep(sleep_records):
     rem = d.get("remSleepDuration") or 0
     stages_total = deep + light + rem
 
-    # hrAvg is beats/second; × 60 → bpm.
+    # hrAvg / hrMin are beats/second; × 60 → bpm. hrMin (lowest sleeping HR) is the
+    # conventional resting-HR proxy — Suunto exposes no dedicated resting-HR field in
+    # either the sleep or recovery data.
     hr_bps = d.get("hrAvg")
     sleep_hr = round(hr_bps * 60) if hr_bps else None
+    hr_min_bps = d.get("hrMin")
+    resting_hr = round(hr_min_bps * 60) if hr_min_bps else None
 
     return {
         "recovery_pct": None,  # filled in later by merge_recovery()
         "sleep_duration_s": int(duration_s),
         "sleep_quality_pct": round(d["quality"] * 100) if d.get("quality") is not None else None,
         "sleep_hr_avg": sleep_hr,
+        "resting_hr": resting_hr,
         "hrv_rmssd": d.get("avgHrv"),  # RMSSD ms, directly usable
         "deep_pct": round(deep / stages_total * 100) if stages_total else None,
         "rem_pct": round(rem / stages_total * 100) if stages_total else None,

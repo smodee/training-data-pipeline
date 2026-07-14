@@ -174,6 +174,8 @@ def _render_recovery_line(wellness):
         parts.append(f"REM: {wellness['rem_pct']}%")
     if wellness.get("hrv_rmssd") is not None:
         parts.append(f"HRV: {round(float(wellness['hrv_rmssd']))} ms")
+    if wellness.get("resting_hr") is not None:
+        parts.append(f"RHR: {wellness['resting_hr']} bpm")
 
     if not parts:
         return None
