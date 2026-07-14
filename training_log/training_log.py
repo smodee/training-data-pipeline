@@ -188,7 +188,9 @@ def main(weeks, from_date, to_date, output, report_format, no_fit, no_wellness, 
     history = tss_store.update_history(history, dict(daily_tss))
     tss_store.save_history(cfg["TSS_HISTORY_FILE"], history)
 
-    load_series = tss_store.compute_load_series(history)
+    # Extend the load series through the range end so trailing rest days keep decaying
+    # CTL/ATL (otherwise the most recent week reports a stale or missing load).
+    load_series = tss_store.compute_load_series(history, through=end.date())
 
     # Assemble day-centric structure.
     days = build_days(workouts, wellness_by_date, start, end, load_series)

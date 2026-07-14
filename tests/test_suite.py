@@ -205,6 +205,25 @@ class TestTssStore(unittest.TestCase):
         series = tss_store.compute_load_series(history)
         self.assertIn("2026-06-05", series)  # gap day is present
 
+    def test_compute_load_series_extends_through_trailing_rest(self):
+        # Rest days after the last activity must keep decaying when `through` is set,
+        # instead of the series stopping at the last recorded date.
+        from datetime import date
+        history = {"2026-06-01": 100.0}
+        series = tss_store.compute_load_series(history, through=date(2026, 6, 8))
+        self.assertIn("2026-06-08", series)  # trailing rest day now present
+        # ATL on the last rest day is strictly lower than on the activity day (decayed).
+        self.assertLess(series["2026-06-08"]["atl"], series["2026-06-01"]["atl"])
+        # ...and keeps dropping day over day across the rest stretch.
+        self.assertLess(series["2026-06-08"]["atl"], series["2026-06-07"]["atl"])
+
+    def test_compute_load_series_through_earlier_does_not_truncate(self):
+        # A `through` before the last recorded date must not shorten the series.
+        from datetime import date
+        history = {"2026-06-01": 80.0, "2026-06-10": 80.0}
+        series = tss_store.compute_load_series(history, through=date(2026, 6, 5))
+        self.assertIn("2026-06-10", series)
+
     def test_form_is_ctl_minus_atl(self):
         history = {"2026-06-01": 100.0}
         series = tss_store.compute_load_series(history)
@@ -718,9 +737,28 @@ class TestComputePeriodSummary(unittest.TestCase):
     def test_load_taken_from_last_day(self):
         day1 = self._day_with_workout()
         day2 = self._day_with_workout()
+        day2["date"] = "2026-06-02"
         day2["load"] = {"ctl": 60.0, "atl": 65.0, "form": -5.0}
         summary = compute_period_summary([day1, day2])
         self.assertEqual(summary["load"]["ctl"], 60.0)
+        # The snapshot date is surfaced so the single figure is unambiguous.
+        self.assertEqual(summary["load_date"], "2026-06-02")
+
+    def test_load_snapshot_uses_trailing_rest_day(self):
+        # A period whose last calendar day is a rest day (no workout) should still
+        # report that day's decayed load — not fall back to the last activity day —
+        # now that the series extends through rest days.
+        activity_day = self._day_with_workout()
+        activity_day["date"] = "2026-06-01"
+        activity_day["load"] = {"ctl": 50.0, "atl": 70.0, "form": -20.0}
+        rest_day = {
+            "date": "2026-06-07", "weekday": "Sunday", "iso": (2026, 23, 7),
+            "wellness": None, "workouts": [], "tss": 0,
+            "load": {"ctl": 49.0, "atl": 55.0, "form": -6.0},
+        }
+        summary = compute_period_summary([activity_day, rest_day])
+        self.assertEqual(summary["load"]["atl"], 55.0)
+        self.assertEqual(summary["load_date"], "2026-06-07")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
