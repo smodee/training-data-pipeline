@@ -120,12 +120,68 @@ SUUNTO_ACTIVITY_ID_MAP = {
     83: "Mountaineering",  # alpine climbing / mountaineering
 }
 
+# The FIT session ``sport``/``sub_sport`` enum is the standardised ANT/Garmin
+# vocabulary — a fixed set — so this map lets new activities resolve automatically
+# from the downloaded FIT file, without hand-adding each Suunto activityId. Keys are
+# the tokens produced by ``fit._fit_sport_token`` ("sport" or "sport/sub_sport");
+# lookup falls back from the specific sub-sport to the bare sport.
+FIT_SPORT_MAP = {
+    "running": "Run",
+    "running/trail": "TrailRun",
+    "running/treadmill": "VirtualRun",
+    "running/indoor_running": "VirtualRun",
+    "cycling": "Ride",
+    "cycling/indoor_cycling": "VirtualRide",
+    "cycling/mountain": "MountainBikeRide",
+    "cycling/gravel_cycling": "GravelRide",
+    "swimming": "Swim",
+    "swimming/lap_swimming": "Swim",
+    "swimming/open_water": "OpenWaterSwim",
+    "walking": "Walk",
+    "hiking": "Hike",
+    "mountaineering": "Mountaineering",
+    "rock_climbing": "Climbing",
+    "cross_country_skiing": "NordicSki",
+    "alpine_skiing": "AlpineSki",
+    "snowboarding": "Snowboard",
+    "disc_golf": "DiscGolf",
+    # Deliberately NOT mapped: the FIT "training" family (bare "training" and its
+    # sub-sports). It's the ANT standard's generic gym/fitness catch-all, and Suunto
+    # overloads it onto several of its own activity types (e.g. activityId 73 =
+    # Circuit Training, used here for varied S&C / calisthenics). For this family the
+    # numeric activityId carries more intent than the FIT enum, so we let it fall
+    # through to SUUNTO_ACTIVITY_ID_MAP rather than guess "WeightTraining".
+}
+
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 PACE_TYPES = RUN_TYPES  # sport types that display pace instead of speed
 
 
-def normalise_sport(raw):
-    """Map a raw Suunto sport identifier (string or numeric activityId) to an internal key."""
+def _map_fit_sport(token):
+    """Resolve a FIT sport token to an internal key, or ``None`` if unmapped.
+
+    Tries the full ``"sport/sub_sport"`` token first, then the bare sport, so a file
+    with an unrecognised sub-sport still resolves via its top-level sport.
+    """
+    if not token:
+        return None
+    if token in FIT_SPORT_MAP:
+        return FIT_SPORT_MAP[token]
+    base = token.split("/", 1)[0]
+    return FIT_SPORT_MAP.get(base)
+
+
+def normalise_sport(raw, fit_sport=None):
+    """Map a Suunto sport identifier to an internal key.
+
+    Prefers the standardised FIT sport enum (``fit_sport``, a token from
+    :func:`training_log.fit.parse_fit`) when it resolves, since that vocabulary is
+    fixed and needs no per-id maintenance. Falls back to the numeric Suunto
+    ``activityId`` map, then the string sport map, then an ``ActivityN`` placeholder.
+    """
+    mapped = _map_fit_sport(fit_sport)
+    if mapped:
+        return mapped
     if raw is None:
         return "Unknown"
     if isinstance(raw, int):
@@ -234,11 +290,12 @@ def _workout_start(workout):
     return parse_date(str(raw))
 
 
-def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
+def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_sport=None):
     """Process a single Suunto workout dict into an enriched, render-ready dict."""
     # activityId (int) comes from the list; string names may come from workouts get.
+    # The FIT sport enum (fit_sport), when present, is preferred as it's standardised.
     raw_sport = _first(workout, "activityType", "sport", "sportType", "type", "activityId")
-    sport = normalise_sport(raw_sport)
+    sport = normalise_sport(raw_sport, fit_sport=fit_sport)
 
     distance_m = _first(workout, "totalDistance", "distance", default=0) or 0
     # totalTime confirmed from workouts list; duration/movingTime may appear in workouts get.
@@ -310,6 +367,34 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
 # Wellness processing
 # --------------------------------------------------------------------------------------
 
+# Sessions that start at or after this local hour are evening bedtimes that belong to
+# the *next* morning's sleep day; earlier starts (after-midnight bedtimes, or naps) stay
+# on the same date. A midday cutoff cleanly separates evening from after-midnight starts.
+_EVENING_BEDTIME_HOUR = 12
+
+
+def sleep_day(record):
+    """Return the calendar day (``YYYY-MM-DD``) a sleep record belongs to.
+
+    Suunto timestamps a sleep session at its *start* (bedtime). Grouping by the raw
+    timestamp date attributes nights inconsistently: a pre-midnight bedtime lands on the
+    day before you wake, so two nights collide on one date while the next day shows none
+    — silent misattribution (and the colliding day then renders the wrong night). We
+    normalise every session to its wake morning: an evening bedtime (local hour >=
+    :data:`_EVENING_BEDTIME_HOUR`) counts toward the next calendar day; an after-midnight
+    bedtime stays on the same date. Being duration-independent, partial updates of one
+    session never split across days. Returns ``None`` if the record has no timestamp.
+    """
+    ts = record.get("timestamp")
+    if not ts:
+        return None
+    dt = parse_date(ts)
+    d = dt.date()
+    if dt.hour >= _EVENING_BEDTIME_HOUR:
+        d = d + timedelta(days=1)
+    return d.isoformat()
+
+
 def process_wellness_sleep(sleep_records):
     """Process raw NDJSON sleep records for a single day into a wellness dict.
 
@@ -360,15 +445,20 @@ def process_wellness_sleep(sleep_records):
     rem = d.get("remSleepDuration") or 0
     stages_total = deep + light + rem
 
-    # hrAvg is beats/second; × 60 → bpm.
+    # hrAvg / hrMin are beats/second; × 60 → bpm. hrMin (lowest sleeping HR) is the
+    # conventional resting-HR proxy — Suunto exposes no dedicated resting-HR field in
+    # either the sleep or recovery data.
     hr_bps = d.get("hrAvg")
     sleep_hr = round(hr_bps * 60) if hr_bps else None
+    hr_min_bps = d.get("hrMin")
+    resting_hr = round(hr_min_bps * 60) if hr_min_bps else None
 
     return {
         "recovery_pct": None,  # filled in later by merge_recovery()
         "sleep_duration_s": int(duration_s),
         "sleep_quality_pct": round(d["quality"] * 100) if d.get("quality") is not None else None,
         "sleep_hr_avg": sleep_hr,
+        "resting_hr": resting_hr,
         "hrv_rmssd": d.get("avgHrv"),  # RMSSD ms, directly usable
         "deep_pct": round(deep / stages_total * 100) if stages_total else None,
         "rem_pct": round(rem / stages_total * 100) if stages_total else None,
@@ -487,11 +577,16 @@ def compute_period_summary(days):
 
     total_tss = sum(w["tss"] for w in workouts if w["tss"])
 
-    # Form snapshot = the load values on the last day of the period.
+    # Load snapshot = the values on the last day of the period that has them. With the
+    # series extended through the range end, that's the period's last calendar day (e.g.
+    # Sunday, or today for the current partial week). We also surface that date so the
+    # single CTL/ATL/Form figure isn't ambiguous about which day it represents.
     last_load = None
+    last_load_date = None
     for day in reversed(days):
         if day["load"]:
             last_load = day["load"]
+            last_load_date = day["date"]
             break
 
     return {
@@ -505,6 +600,7 @@ def compute_period_summary(days):
         "zone_pct": zone_pct,
         "total_tss": round(total_tss) if total_tss else 0,
         "load": last_load,
+        "load_date": last_load_date,
         "recovery": _recovery_overview(days),
     }
 

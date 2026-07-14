@@ -32,6 +32,7 @@ from training_log.process import (
     normalise_sport,
     process_wellness_sleep,
     process_workout,
+    sleep_day,
     summary_tss_by_date,
     zone_seconds_to_pct,
 )
@@ -75,7 +76,7 @@ def make_workout(**overrides):
 
 
 def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, rem=900,
-                      hr_avg=0.93, is_nap=False):
+                      hr_avg=0.93, hr_min=0.85, is_nap=False):
     return {
         "timestamp": "2026-06-10T01:42:00.000+02:00",
         "entryData": {
@@ -86,6 +87,7 @@ def make_sleep_record(sleep_id, duration, quality=0.75, deep=1800, light=3600, r
             "lightSleepDuration": light,
             "remSleepDuration": rem,
             "hrAvg": hr_avg,
+            "hrMin": hr_min,
             "avgHrv": 38.5,
             "isNap": is_nap,
         },
@@ -205,6 +207,25 @@ class TestTssStore(unittest.TestCase):
         series = tss_store.compute_load_series(history)
         self.assertIn("2026-06-05", series)  # gap day is present
 
+    def test_compute_load_series_extends_through_trailing_rest(self):
+        # Rest days after the last activity must keep decaying when `through` is set,
+        # instead of the series stopping at the last recorded date.
+        from datetime import date
+        history = {"2026-06-01": 100.0}
+        series = tss_store.compute_load_series(history, through=date(2026, 6, 8))
+        self.assertIn("2026-06-08", series)  # trailing rest day now present
+        # ATL on the last rest day is strictly lower than on the activity day (decayed).
+        self.assertLess(series["2026-06-08"]["atl"], series["2026-06-01"]["atl"])
+        # ...and keeps dropping day over day across the rest stretch.
+        self.assertLess(series["2026-06-08"]["atl"], series["2026-06-07"]["atl"])
+
+    def test_compute_load_series_through_earlier_does_not_truncate(self):
+        # A `through` before the last recorded date must not shorten the series.
+        from datetime import date
+        history = {"2026-06-01": 80.0, "2026-06-10": 80.0}
+        series = tss_store.compute_load_series(history, through=date(2026, 6, 5))
+        self.assertIn("2026-06-10", series)
+
     def test_form_is_ctl_minus_atl(self):
         history = {"2026-06-01": 100.0}
         series = tss_store.compute_load_series(history)
@@ -314,6 +335,29 @@ class TestNormaliseSport(unittest.TestCase):
     def test_none_returns_unknown(self):
         self.assertEqual(normalise_sport(None), "Unknown")
 
+    def test_fit_sport_preferred_over_activity_id(self):
+        # FIT says trail run; the numeric id says plain Run. FIT wins.
+        self.assertEqual(normalise_sport(1, fit_sport="running/trail"), "TrailRun")
+
+    def test_fit_sport_identifies_unmapped_activity_id(self):
+        # An activityId with no numeric mapping still resolves via the FIT enum,
+        # instead of falling through to the "ActivityN" placeholder.
+        self.assertEqual(normalise_sport(999, fit_sport="mountaineering"), "Mountaineering")
+
+    def test_fit_sub_sport_falls_back_to_bare_sport(self):
+        # Unknown sub-sport still resolves via the top-level sport.
+        self.assertEqual(normalise_sport(None, fit_sport="cycling/handcycling"), "Ride")
+
+    def test_unmapped_fit_sport_falls_back_to_activity_id(self):
+        # A FIT sport we don't map (e.g. "generic") must not mask the numeric id.
+        self.assertEqual(normalise_sport(1, fit_sport="generic"), "Run")
+
+    def test_training_family_defers_to_activity_id(self):
+        # Suunto files S&C / calisthenics under the generic FIT "training" value but
+        # its own activityId 73 = Circuit Training. The numeric id must win, so bare
+        # "training" is intentionally left unmapped and defers to it.
+        self.assertEqual(normalise_sport(73, fit_sport="training"), "CircuitTraining")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # process.py — TSS / EPOC extraction
@@ -398,6 +442,12 @@ class TestProcessWorkout(unittest.TestCase):
         result = process_workout(w, None, None, "", self._cfg(), fit_tss=92)
         self.assertEqual(result["tss"], 92)
 
+    def test_fit_sport_overrides_activity_id(self):
+        # activityId 1 = Run, but the FIT file reports a trail run.
+        w = make_workout(activityId=1)
+        result = process_workout(w, None, None, "", self._cfg(), fit_sport="running/trail")
+        self.assertEqual(result["sport_type"], "TrailRun")
+
     def test_notes_stored(self):
         w = make_workout()
         result = process_workout(w, None, None, "Felt good today", self._cfg())
@@ -458,11 +508,41 @@ class TestProcessWellnessSleep(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["sleep_duration_s"], 25200)
 
+    def test_after_midnight_bedtime_stays_same_day(self):
+        # A 01:42 bedtime belongs to that morning's sleep day.
+        rec = {"timestamp": "2026-06-10T01:42:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-10")
+
+    def test_evening_bedtime_counts_toward_next_day(self):
+        # A 23:01 bedtime is the night you wake the *next* morning — the real bug:
+        # grouping by the raw date (06-08) collided two nights and blanked 06-09.
+        rec = {"timestamp": "2026-06-08T23:01:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-06-09")
+
+    def test_evening_bedtime_rolls_month_boundary(self):
+        rec = {"timestamp": "2026-06-30T22:30:00.000+02:00", "entryData": {}}
+        self.assertEqual(sleep_day(rec), "2026-07-01")
+
+    def test_sleep_day_none_without_timestamp(self):
+        self.assertIsNone(sleep_day({"entryData": {}}))
+
     def test_hr_avg_converted_from_bps(self):
         # hr_avg=0.93 beats/sec → 0.93*60 = 55.8 → 56 bpm
         records = [make_sleep_record("s1", duration=25200, hr_avg=0.93)]
         result = process_wellness_sleep(records)
         self.assertEqual(result["sleep_hr_avg"], round(0.93 * 60))
+
+    def test_resting_hr_from_hr_min_bps(self):
+        # hrMin (lowest sleeping HR) is the resting-HR proxy: 0.85 bps → 51 bpm.
+        records = [make_sleep_record("s1", duration=25200, hr_min=0.85)]
+        result = process_wellness_sleep(records)
+        self.assertEqual(result["resting_hr"], round(0.85 * 60))
+
+    def test_resting_hr_none_when_absent(self):
+        rec = make_sleep_record("s1", duration=25200)
+        del rec["entryData"]["hrMin"]
+        result = process_wellness_sleep([rec])
+        self.assertIsNone(result["resting_hr"])
 
     def test_quality_converted_from_fraction(self):
         records = [make_sleep_record("s1", duration=25200, quality=0.80)]
@@ -689,9 +769,28 @@ class TestComputePeriodSummary(unittest.TestCase):
     def test_load_taken_from_last_day(self):
         day1 = self._day_with_workout()
         day2 = self._day_with_workout()
+        day2["date"] = "2026-06-02"
         day2["load"] = {"ctl": 60.0, "atl": 65.0, "form": -5.0}
         summary = compute_period_summary([day1, day2])
         self.assertEqual(summary["load"]["ctl"], 60.0)
+        # The snapshot date is surfaced so the single figure is unambiguous.
+        self.assertEqual(summary["load_date"], "2026-06-02")
+
+    def test_load_snapshot_uses_trailing_rest_day(self):
+        # A period whose last calendar day is a rest day (no workout) should still
+        # report that day's decayed load — not fall back to the last activity day —
+        # now that the series extends through rest days.
+        activity_day = self._day_with_workout()
+        activity_day["date"] = "2026-06-01"
+        activity_day["load"] = {"ctl": 50.0, "atl": 70.0, "form": -20.0}
+        rest_day = {
+            "date": "2026-06-07", "weekday": "Sunday", "iso": (2026, 23, 7),
+            "wellness": None, "workouts": [], "tss": 0,
+            "load": {"ctl": 49.0, "atl": 55.0, "form": -6.0},
+        }
+        summary = compute_period_summary([activity_day, rest_day])
+        self.assertEqual(summary["load"]["atl"], 55.0)
+        self.assertEqual(summary["load_date"], "2026-06-07")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -758,16 +857,48 @@ class TestParseFit(unittest.TestCase):
             messages.append(m)
         return messages
 
-    def test_returns_4_tuple(self):
+    def test_returns_5_tuple(self):
         from training_log.fit import parse_fit
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = []
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
         self.assertIsNone(tss)
+        self.assertIsNone(sport)
+
+    def test_sport_extracted_from_session(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message(
+            "session", {"sport": "running", "sub_sport": "trail"}
+        )
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertEqual(sport, "running/trail")
+
+    def test_sport_generic_sub_collapses_to_bare_sport(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message(
+            "session", {"sport": "hiking", "sub_sport": "generic"}
+        )
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertEqual(sport, "hiking")
+
+    def test_sport_absent_returns_none(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message("session", {"training_stress_score": 40})
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertIsNone(sport)
 
     def test_hr_extracted(self):
         from training_log.fit import parse_fit
@@ -775,7 +906,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = messages
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(hr, [140, 145, 150])
         self.assertEqual(time_data, [0, 60, 120])
 
@@ -785,7 +916,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(tss, 85)
 
     def test_description_extracted_from_dev_field(self):
@@ -797,14 +928,14 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(desc, "Legs prehab")
 
     def test_fitparse_import_error(self):
         from training_log.fit import parse_fit
         # Remove fitparse so the ImportError branch fires
         with patch.dict(sys.modules, {"fitparse": None}):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
@@ -815,7 +946,7 @@ class TestParseFit(unittest.TestCase):
         mock_fitparse = MagicMock()
         mock_fitparse.FitFile.side_effect = Exception("corrupt file")
         with patch.dict(sys.modules, {"fitparse": mock_fitparse}):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(tss)
 
@@ -940,12 +1071,19 @@ class TestRenderHelpers(unittest.TestCase):
             "deep_pct": 22,
             "rem_pct": 19,
             "hrv_rmssd": 38.5,
+            "resting_hr": 51,
         }
         line = _render_recovery_line(wellness)
         self.assertIn("**Recovery:**", line)
         self.assertIn("80%", line)
         self.assertIn("7h00", line)
         self.assertIn("HRV: 38 ms", line)  # round(38.5) == 38 in Python 3 (banker's rounding)
+        self.assertIn("RHR: 51 bpm", line)
+
+    def test_render_recovery_line_omits_rhr_when_absent(self):
+        # No resting_hr key → no RHR segment (other fields still render).
+        line = _render_recovery_line({"recovery_pct": 70, "hrv_rmssd": 40})
+        self.assertNotIn("RHR", line)
 
     def test_render_recovery_line_none_on_no_data(self):
         self.assertIsNone(_render_recovery_line(None))
@@ -980,6 +1118,35 @@ class TestRenderHelpers(unittest.TestCase):
         self.assertIn("EPOC: 42", full)
         self.assertIn("Felt great", full)
         self.assertIn("Z2 65.0%", full)
+
+    def test_render_workout_heading_gets_start_time(self):
+        # No custom name (name == sport): heading = sport label + start time.
+        def wk(hour, minute):
+            return {
+                "name": "Hike", "sport_type": "Hike",
+                "start_dt": datetime.fromisoformat(f"2026-06-08T{hour:02d}:{minute:02d}:00"),
+                "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+                "elevation_gain": 0, "avg_hr": None, "max_hr": None,
+                "has_heartrate": False, "pace": None, "speed": None, "vam": None,
+                "zone_pct": None, "tss": None, "epoc": None, "notes": "", "avg_cadence": None,
+            }
+        self.assertIn("### Hike (09:18)", "\n".join(_render_workout(wk(9, 18))))
+        self.assertIn("### Hike (23:02)", "\n".join(_render_workout(wk(23, 2))))
+
+    def test_render_workout_start_time_orders_multi_session_day(self):
+        # Two sessions the same day get distinct, correctly-ordered start times.
+        base = {
+            "distance_km": 0, "moving_time_s": 1800, "moving_time_fmt": "0:30",
+            "elevation_gain": 0, "avg_hr": None, "max_hr": None, "has_heartrate": False,
+            "pace": None, "speed": None, "vam": None, "zone_pct": None, "tss": None,
+            "epoc": None, "notes": "", "avg_cadence": None,
+        }
+        am = {**base, "name": "Hike", "sport_type": "Hike",
+              "start_dt": datetime.fromisoformat("2026-06-08T09:00:00")}
+        pm = {**base, "name": "Climbing", "sport_type": "Climbing",
+              "start_dt": datetime.fromisoformat("2026-06-08T15:00:00")}
+        self.assertIn("### Hike (09:00)", "\n".join(_render_workout(am)))
+        self.assertIn("### Climbing (15:00)", "\n".join(_render_workout(pm)))
 
     def test_render_day_rest_day(self):
         day = {

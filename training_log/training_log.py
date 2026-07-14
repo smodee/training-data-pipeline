@@ -23,6 +23,7 @@ from .process import (
     merge_recovery,
     process_wellness_sleep,
     process_workout,
+    sleep_day,
     summary_tss_by_date,
 )
 from .render import (
@@ -67,18 +68,22 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
         # per-workout API call and use the list item directly.
         workout_id = suunto._first(workout, "key", "id", "workoutId")
 
-        hr_data, time_data, description, fit_tss = None, None, "", None
+        hr_data, time_data, description, fit_tss, fit_sport = None, None, "", None, None
         if not no_fit:
             fit_path = suunto.download_fit(cfg, workout_id, quiet=quiet)
             if fit_path:
-                hr_data, time_data, description, fit_tss = parse_fit(fit_path)
+                hr_data, time_data, description, fit_tss, fit_sport = parse_fit(fit_path)
 
         # Combine FIT description (up to 256 chars) and comments; both may carry
         # useful info so we always fetch comments and append if non-empty.
         comments = suunto.get_workout_notes(cfg, workout_id, quiet=quiet)
         notes = "\n".join(p for p in (description, comments) if p)
 
-        processed.append(process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=fit_tss))
+        processed.append(
+            process_workout(
+                workout, hr_data, time_data, notes, cfg, fit_tss=fit_tss, fit_sport=fit_sport
+            )
+        )
 
     return processed
 
@@ -92,15 +97,16 @@ def _fetch_wellness(cfg, start, end, quiet):
     start_str = start.strftime("%Y-%m-%d")
     end_str = end.strftime("%Y-%m-%d")
 
-    # Sleep returns NDJSON; group records by the date portion of each timestamp.
-    all_sleep = suunto.get_wellness_sleep(cfg, start_str, quiet=quiet)
+    # Sleep returns NDJSON; group each session by the day it belongs to (its wake
+    # morning), not its raw bedtime timestamp — see process.sleep_day. Fetch from one day
+    # earlier so the first in-range day's pre-midnight bedtime (timestamped the previous
+    # evening) is still captured.
+    fetch_since = (start.date() - timedelta(days=1)).isoformat()
+    all_sleep = suunto.get_wellness_sleep(cfg, fetch_since, quiet=quiet)
     sleep_by_date = {}
     for record in all_sleep:
-        ts = record.get("timestamp", "")
-        if not ts:
-            continue
-        date_str = ts[:10]  # "2026-06-10" from "2026-06-10T01:42:00.000+02:00"
-        if start_str <= date_str <= end_str:
+        date_str = sleep_day(record)
+        if date_str and start_str <= date_str <= end_str:
             sleep_by_date.setdefault(date_str, []).append(record)
 
     # Recovery is also range-based; result is {date: record} already grouped.
@@ -184,7 +190,9 @@ def main(weeks, from_date, to_date, output, report_format, no_fit, no_wellness, 
     history = tss_store.update_history(history, dict(daily_tss))
     tss_store.save_history(cfg["TSS_HISTORY_FILE"], history)
 
-    load_series = tss_store.compute_load_series(history)
+    # Extend the load series through the range end so trailing rest days keep decaying
+    # CTL/ATL (otherwise the most recent week reports a stale or missing load).
+    load_series = tss_store.compute_load_series(history, through=end.date())
 
     # Assemble day-centric structure.
     days = build_days(workouts, wellness_by_date, start, end, load_series)

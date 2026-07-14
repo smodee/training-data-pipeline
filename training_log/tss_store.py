@@ -52,8 +52,8 @@ def _parse(d):
     return date.fromisoformat(d)
 
 
-def compute_load_series(history):
-    """Compute CTL / ATL / Form for every day from the first record to the last.
+def compute_load_series(history, through=None):
+    """Compute CTL / ATL / Form for every day from the first record onward.
 
     Iterates day by day so gaps (days with no entry) correctly decay the averages with
     TSS = 0. Uses the spec formulas:
@@ -61,6 +61,12 @@ def compute_load_series(history):
         CTL = prev_CTL * e^(-1/42) + tss * (1 - e^(-1/42))
         ATL = prev_ATL * e^(-1/7)  + tss * (1 - e^(-1/7))
         Form (TSB) = CTL - ATL
+
+    By default the series ends at the last *recorded* date. Pass ``through`` (a
+    ``datetime.date``) to extend it through a later day — typically the end of the
+    report range or today — so that rest days *after* the last activity keep decaying
+    CTL/ATL. Without this, the most recent stretch of rest days gets no value at all and
+    a period ending in rest silently reports a stale load sampled at the last activity.
 
     Returns {date(str): {"ctl": float, "atl": float, "form": float}}.
     """
@@ -70,6 +76,8 @@ def compute_load_series(history):
     dates = sorted(history)
     cursor = _parse(dates[0])
     end = _parse(dates[-1])
+    if through is not None and through > end:
+        end = through
 
     ctl_decay = math.exp(-1 / CTL_TIME_CONSTANT)
     atl_decay = math.exp(-1 / ATL_TIME_CONSTANT)
