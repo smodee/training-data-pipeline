@@ -111,23 +111,45 @@ def _run_ndjson(cfg, args, quiet=False):
 # Workouts
 # --------------------------------------------------------------------------------------
 
+_PAGE_SIZE = 100  # suuntool's server maximum per page
+_MAX_PAGES = 50   # safety cap: 5000 workouts is far beyond any real window
+
+
 def list_workouts(cfg, start_date, end_date, quiet=False):
     """List workouts from ``start_date`` to ``end_date`` (both ``YYYY-MM-DD``, inclusive).
 
     suuntool's ``workouts list`` takes ``--since <date>`` for the start; there is no
     end-date flag, so we filter to ``end_date`` on the client side.
 
+    ``workouts list`` defaults to ``--limit 20`` and caps a single request at 100 (the
+    server's per-page maximum), so a naive call silently truncates any window reaching
+    back more than ~20 workouts. We page through with ``--offset`` in 100-item batches
+    until a short page tells us we've reached ``start_date``. (``--stream`` also
+    paginates but ignores ``--since`` — it re-fetches the entire account from time 0 and
+    fails intermittently with BAD_ENVELOPE/timeout — so it's unsuitable here.)
+
     Returns a list of raw workout summary dicts.
     """
-    data = _run(
-        cfg,
-        ["workouts", "list", "--since", start_date, "--format", "json"],
-        quiet=quiet,
-    )
-    if data is None:
-        return []
+    items = []
+    for page in range(_MAX_PAGES):
+        data = _run(
+            cfg,
+            [
+                "workouts", "list", "--since", start_date,
+                "--limit", str(_PAGE_SIZE), "--offset", str(page * _PAGE_SIZE),
+                "--format", "json",
+            ],
+            quiet=quiet,
+        )
+        if not data:
+            break
+        batch = _first(data, "items", "workouts", "results", default=[]) if isinstance(data, dict) else data
+        if not batch:
+            break
+        items.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break  # last page reached
 
-    items = _first(data, "items", "workouts", "results", default=[]) if isinstance(data, dict) else data
     if not items:
         return []
 

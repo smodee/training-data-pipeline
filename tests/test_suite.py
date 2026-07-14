@@ -1021,6 +1021,28 @@ class TestSuuntoHelpers(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], "w1")
 
+    def test_list_workouts_paginates_past_one_page(self):
+        """Windows larger than one server page (100) must page through --offset,
+        not silently truncate at the first page."""
+        from training_log.suunto import list_workouts, _PAGE_SIZE
+
+        cfg = {"SUUNTOOL_PATH": "suuntool"}
+        ts = int(datetime(2026, 6, 15, 10, 0).timestamp() * 1000)
+        full_page = [{"startTime": ts, "key": f"w{i}"} for i in range(_PAGE_SIZE)]
+        short_page = [{"startTime": ts, "key": "last"}]
+        # First call returns a full page (triggers another fetch), second a short
+        # page (terminates). offset must advance between the two calls.
+        with patch(
+            "training_log.suunto._run",
+            side_effect=[{"items": full_page}, {"items": short_page}],
+        ) as mock_run:
+            result = list_workouts(cfg, "2026-01-01", "2026-12-31", quiet=True)
+        self.assertEqual(len(result), _PAGE_SIZE + 1)
+        self.assertEqual(mock_run.call_count, 2)
+        first_args, second_args = mock_run.call_args_list[0][0][1], mock_run.call_args_list[1][0][1]
+        self.assertIn("0", first_args)
+        self.assertIn(str(_PAGE_SIZE), second_args)  # offset advanced to 100
+
     def test_get_workout_notes_list_response(self):
         from training_log.suunto import get_workout_notes
         cfg = {"SUUNTOOL_PATH": "suuntool"}
