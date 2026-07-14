@@ -67,18 +67,22 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
         # per-workout API call and use the list item directly.
         workout_id = suunto._first(workout, "key", "id", "workoutId")
 
-        hr_data, time_data, description, fit_tss = None, None, "", None
+        hr_data, time_data, description, fit_tss, fit_sport = None, None, "", None, None
         if not no_fit:
             fit_path = suunto.download_fit(cfg, workout_id, quiet=quiet)
             if fit_path:
-                hr_data, time_data, description, fit_tss = parse_fit(fit_path)
+                hr_data, time_data, description, fit_tss, fit_sport = parse_fit(fit_path)
 
         # Combine FIT description (up to 256 chars) and comments; both may carry
         # useful info so we always fetch comments and append if non-empty.
         comments = suunto.get_workout_notes(cfg, workout_id, quiet=quiet)
         notes = "\n".join(p for p in (description, comments) if p)
 
-        processed.append(process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=fit_tss))
+        processed.append(
+            process_workout(
+                workout, hr_data, time_data, notes, cfg, fit_tss=fit_tss, fit_sport=fit_sport
+            )
+        )
 
     return processed
 

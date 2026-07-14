@@ -314,6 +314,29 @@ class TestNormaliseSport(unittest.TestCase):
     def test_none_returns_unknown(self):
         self.assertEqual(normalise_sport(None), "Unknown")
 
+    def test_fit_sport_preferred_over_activity_id(self):
+        # FIT says trail run; the numeric id says plain Run. FIT wins.
+        self.assertEqual(normalise_sport(1, fit_sport="running/trail"), "TrailRun")
+
+    def test_fit_sport_identifies_unmapped_activity_id(self):
+        # An activityId with no numeric mapping still resolves via the FIT enum,
+        # instead of falling through to the "ActivityN" placeholder.
+        self.assertEqual(normalise_sport(999, fit_sport="mountaineering"), "Mountaineering")
+
+    def test_fit_sub_sport_falls_back_to_bare_sport(self):
+        # Unknown sub-sport still resolves via the top-level sport.
+        self.assertEqual(normalise_sport(None, fit_sport="cycling/handcycling"), "Ride")
+
+    def test_unmapped_fit_sport_falls_back_to_activity_id(self):
+        # A FIT sport we don't map (e.g. "generic") must not mask the numeric id.
+        self.assertEqual(normalise_sport(1, fit_sport="generic"), "Run")
+
+    def test_training_family_defers_to_activity_id(self):
+        # Suunto files S&C / calisthenics under the generic FIT "training" value but
+        # its own activityId 73 = Circuit Training. The numeric id must win, so bare
+        # "training" is intentionally left unmapped and defers to it.
+        self.assertEqual(normalise_sport(73, fit_sport="training"), "CircuitTraining")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # process.py — TSS / EPOC extraction
@@ -397,6 +420,12 @@ class TestProcessWorkout(unittest.TestCase):
         w = make_workout()
         result = process_workout(w, None, None, "", self._cfg(), fit_tss=92)
         self.assertEqual(result["tss"], 92)
+
+    def test_fit_sport_overrides_activity_id(self):
+        # activityId 1 = Run, but the FIT file reports a trail run.
+        w = make_workout(activityId=1)
+        result = process_workout(w, None, None, "", self._cfg(), fit_sport="running/trail")
+        self.assertEqual(result["sport_type"], "TrailRun")
 
     def test_notes_stored(self):
         w = make_workout()
@@ -758,16 +787,48 @@ class TestParseFit(unittest.TestCase):
             messages.append(m)
         return messages
 
-    def test_returns_4_tuple(self):
+    def test_returns_5_tuple(self):
         from training_log.fit import parse_fit
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = []
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
         self.assertIsNone(tss)
+        self.assertIsNone(sport)
+
+    def test_sport_extracted_from_session(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message(
+            "session", {"sport": "running", "sub_sport": "trail"}
+        )
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertEqual(sport, "running/trail")
+
+    def test_sport_generic_sub_collapses_to_bare_sport(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message(
+            "session", {"sport": "hiking", "sub_sport": "generic"}
+        )
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertEqual(sport, "hiking")
+
+    def test_sport_absent_returns_none(self):
+        from training_log.fit import parse_fit
+        session_msg = self._make_mock_message("session", {"training_stress_score": 40})
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = [session_msg]
+        with self._inject_fitparse(mock_ff):
+            _, _, _, _, sport = parse_fit("/fake/path.fit")
+        self.assertIsNone(sport)
 
     def test_hr_extracted(self):
         from training_log.fit import parse_fit
@@ -775,7 +836,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = messages
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(hr, [140, 145, 150])
         self.assertEqual(time_data, [0, 60, 120])
 
@@ -785,7 +846,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(tss, 85)
 
     def test_description_extracted_from_dev_field(self):
@@ -797,14 +858,14 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertEqual(desc, "Legs prehab")
 
     def test_fitparse_import_error(self):
         from training_log.fit import parse_fit
         # Remove fitparse so the ImportError branch fires
         with patch.dict(sys.modules, {"fitparse": None}):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
@@ -815,7 +876,7 @@ class TestParseFit(unittest.TestCase):
         mock_fitparse = MagicMock()
         mock_fitparse.FitFile.side_effect = Exception("corrupt file")
         with patch.dict(sys.modules, {"fitparse": mock_fitparse}):
-            hr, time_data, desc, tss = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(tss)
 

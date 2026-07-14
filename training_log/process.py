@@ -120,12 +120,68 @@ SUUNTO_ACTIVITY_ID_MAP = {
     83: "Mountaineering",  # alpine climbing / mountaineering
 }
 
+# The FIT session ``sport``/``sub_sport`` enum is the standardised ANT/Garmin
+# vocabulary — a fixed set — so this map lets new activities resolve automatically
+# from the downloaded FIT file, without hand-adding each Suunto activityId. Keys are
+# the tokens produced by ``fit._fit_sport_token`` ("sport" or "sport/sub_sport");
+# lookup falls back from the specific sub-sport to the bare sport.
+FIT_SPORT_MAP = {
+    "running": "Run",
+    "running/trail": "TrailRun",
+    "running/treadmill": "VirtualRun",
+    "running/indoor_running": "VirtualRun",
+    "cycling": "Ride",
+    "cycling/indoor_cycling": "VirtualRide",
+    "cycling/mountain": "MountainBikeRide",
+    "cycling/gravel_cycling": "GravelRide",
+    "swimming": "Swim",
+    "swimming/lap_swimming": "Swim",
+    "swimming/open_water": "OpenWaterSwim",
+    "walking": "Walk",
+    "hiking": "Hike",
+    "mountaineering": "Mountaineering",
+    "rock_climbing": "Climbing",
+    "cross_country_skiing": "NordicSki",
+    "alpine_skiing": "AlpineSki",
+    "snowboarding": "Snowboard",
+    "disc_golf": "DiscGolf",
+    # Deliberately NOT mapped: the FIT "training" family (bare "training" and its
+    # sub-sports). It's the ANT standard's generic gym/fitness catch-all, and Suunto
+    # overloads it onto several of its own activity types (e.g. activityId 73 =
+    # Circuit Training, used here for varied S&C / calisthenics). For this family the
+    # numeric activityId carries more intent than the FIT enum, so we let it fall
+    # through to SUUNTO_ACTIVITY_ID_MAP rather than guess "WeightTraining".
+}
+
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 PACE_TYPES = RUN_TYPES  # sport types that display pace instead of speed
 
 
-def normalise_sport(raw):
-    """Map a raw Suunto sport identifier (string or numeric activityId) to an internal key."""
+def _map_fit_sport(token):
+    """Resolve a FIT sport token to an internal key, or ``None`` if unmapped.
+
+    Tries the full ``"sport/sub_sport"`` token first, then the bare sport, so a file
+    with an unrecognised sub-sport still resolves via its top-level sport.
+    """
+    if not token:
+        return None
+    if token in FIT_SPORT_MAP:
+        return FIT_SPORT_MAP[token]
+    base = token.split("/", 1)[0]
+    return FIT_SPORT_MAP.get(base)
+
+
+def normalise_sport(raw, fit_sport=None):
+    """Map a Suunto sport identifier to an internal key.
+
+    Prefers the standardised FIT sport enum (``fit_sport``, a token from
+    :func:`training_log.fit.parse_fit`) when it resolves, since that vocabulary is
+    fixed and needs no per-id maintenance. Falls back to the numeric Suunto
+    ``activityId`` map, then the string sport map, then an ``ActivityN`` placeholder.
+    """
+    mapped = _map_fit_sport(fit_sport)
+    if mapped:
+        return mapped
     if raw is None:
         return "Unknown"
     if isinstance(raw, int):
@@ -234,11 +290,12 @@ def _workout_start(workout):
     return parse_date(str(raw))
 
 
-def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None):
+def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_sport=None):
     """Process a single Suunto workout dict into an enriched, render-ready dict."""
     # activityId (int) comes from the list; string names may come from workouts get.
+    # The FIT sport enum (fit_sport), when present, is preferred as it's standardised.
     raw_sport = _first(workout, "activityType", "sport", "sportType", "type", "activityId")
-    sport = normalise_sport(raw_sport)
+    sport = normalise_sport(raw_sport, fit_sport=fit_sport)
 
     distance_m = _first(workout, "totalDistance", "distance", default=0) or 0
     # totalTime confirmed from workouts list; duration/movingTime may appear in workouts get.
