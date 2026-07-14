@@ -117,6 +117,7 @@ SUUNTO_ACTIVITY_ID_MAP = {
     51: "YogaFlexibility", # yoga/pilates, used for mobility/flexibility
     66: "DiscGolf",        # disc golf
     73: "CircuitTraining", # S&C / circuit sessions
+    83: "Mountaineering",  # alpine climbing / mountaineering
 }
 
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
