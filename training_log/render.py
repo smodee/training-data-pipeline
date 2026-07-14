@@ -122,8 +122,9 @@ def _render_summary_block(summary, heading):
 
     if summary["load"]:
         load = summary["load"]
+        as_of = f" (as of {summary['load_date']})" if summary.get("load_date") else ""
         lines.append(
-            f"- CTL: {round(load['ctl'])} | ATL: {round(load['atl'])} | Form: {round(load['form'])}"
+            f"- CTL: {round(load['ctl'])} | ATL: {round(load['atl'])} | Form: {round(load['form'])}{as_of}"
         )
 
     return lines

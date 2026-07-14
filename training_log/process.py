@@ -544,11 +544,16 @@ def compute_period_summary(days):
 
     total_tss = sum(w["tss"] for w in workouts if w["tss"])
 
-    # Form snapshot = the load values on the last day of the period.
+    # Load snapshot = the values on the last day of the period that has them. With the
+    # series extended through the range end, that's the period's last calendar day (e.g.
+    # Sunday, or today for the current partial week). We also surface that date so the
+    # single CTL/ATL/Form figure isn't ambiguous about which day it represents.
     last_load = None
+    last_load_date = None
     for day in reversed(days):
         if day["load"]:
             last_load = day["load"]
+            last_load_date = day["date"]
             break
 
     return {
@@ -562,6 +567,7 @@ def compute_period_summary(days):
         "zone_pct": zone_pct,
         "total_tss": round(total_tss) if total_tss else 0,
         "load": last_load,
+        "load_date": last_load_date,
         "recovery": _recovery_overview(days),
     }
 
