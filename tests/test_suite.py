@@ -857,17 +857,18 @@ class TestParseFit(unittest.TestCase):
             messages.append(m)
         return messages
 
-    def test_returns_5_tuple(self):
+    def test_returns_6_tuple(self):
         from training_log.fit import parse_fit
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = []
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
         self.assertIsNone(tss)
         self.assertIsNone(sport)
+        self.assertEqual(legs, [])
 
     def test_sport_extracted_from_session(self):
         from training_log.fit import parse_fit
@@ -877,7 +878,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            _, _, _, _, sport = parse_fit("/fake/path.fit")
+            _, _, _, _, sport, _ = parse_fit("/fake/path.fit")
         self.assertEqual(sport, "running/trail")
 
     def test_sport_generic_sub_collapses_to_bare_sport(self):
@@ -888,7 +889,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            _, _, _, _, sport = parse_fit("/fake/path.fit")
+            _, _, _, _, sport, _ = parse_fit("/fake/path.fit")
         self.assertEqual(sport, "hiking")
 
     def test_sport_absent_returns_none(self):
@@ -897,7 +898,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            _, _, _, _, sport = parse_fit("/fake/path.fit")
+            _, _, _, _, sport, _ = parse_fit("/fake/path.fit")
         self.assertIsNone(sport)
 
     def test_hr_extracted(self):
@@ -906,7 +907,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = messages
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertEqual(hr, [140, 145, 150])
         self.assertEqual(time_data, [0, 60, 120])
 
@@ -916,7 +917,7 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [session_msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertEqual(tss, 85)
 
     def test_description_extracted_from_dev_field(self):
@@ -928,14 +929,14 @@ class TestParseFit(unittest.TestCase):
         mock_ff = MagicMock()
         mock_ff.get_messages.return_value = [msg]
         with self._inject_fitparse(mock_ff):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertEqual(desc, "Legs prehab")
 
     def test_fitparse_import_error(self):
         from training_log.fit import parse_fit
         # Remove fitparse so the ImportError branch fires
         with patch.dict(sys.modules, {"fitparse": None}):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(time_data)
         self.assertEqual(desc, "")
@@ -946,7 +947,7 @@ class TestParseFit(unittest.TestCase):
         mock_fitparse = MagicMock()
         mock_fitparse.FitFile.side_effect = Exception("corrupt file")
         with patch.dict(sys.modules, {"fitparse": mock_fitparse}):
-            hr, time_data, desc, tss, sport = parse_fit("/fake/path.fit")
+            hr, time_data, desc, tss, sport, legs = parse_fit("/fake/path.fit")
         self.assertIsNone(hr)
         self.assertIsNone(tss)
 
@@ -1331,6 +1332,163 @@ class TestEndToEnd(unittest.TestCase):
         content = open(written[0]).read()
         self.assertIn("Training log", content)
         self.assertIn("Recovery:", content)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Multisport workouts (one FIT file, one session message per sport segment)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _fit_session(sport, sub_sport, start, timer_s, dist, ascent, avg_hr, max_hr, tss=None):
+    """Values of a FIT session message as Suunto writes them (start in UTC)."""
+    return {
+        "sport": sport, "sub_sport": sub_sport, "start_time": start,
+        "total_timer_time": timer_s, "total_distance": dist, "total_ascent": ascent,
+        "avg_heart_rate": avg_hr, "max_heart_rate": max_hr,
+        "training_stress_score": tss,
+    }
+
+
+# Shape of a real Suunto multisport day (Yosemite, 2026-11-06): hike approach,
+# climb, hike descent, a single pitch, walk out. activityId 68, five sessions.
+YOSEMITE_SESSIONS = [
+    _fit_session("hiking", "trail", datetime(2026, 11, 6, 16, 12, 20), 1022.4, 609.0, 91, 100, 129),
+    _fit_session("rock_climbing", None, datetime(2026, 11, 6, 17, 21, 41), 9521.7, 1131.0, 227, 96, 143),
+    _fit_session("hiking", "trail", datetime(2026, 11, 6, 23, 7, 23), 4291.1, 2927.0, 63, 115, 134),
+    _fit_session("rock_climbing", None, datetime(2026, 11, 7, 0, 18, 55), 1111.0, 28.0, 21, 113, 127),
+    _fit_session("hiking", "trail", datetime(2026, 11, 7, 1, 11, 53), 361.8, 373.0, None, 110, 113),
+]
+
+
+class TestMultisport(unittest.TestCase):
+
+    def _parse(self, sessions):
+        from training_log.fit import parse_fit
+        messages = []
+        for values in sessions:
+            m = MagicMock()
+            m.name = "session"
+            fields = []
+            for k, v in values.items():
+                f = MagicMock()
+                f.name = k
+                f.value = v
+                fields.append(f)
+            m.__iter__ = MagicMock(return_value=iter(fields))
+            m.fields = fields
+            messages.append(m)
+        mock_ff = MagicMock()
+        mock_ff.get_messages.return_value = messages
+        mock_fitparse = MagicMock()
+        mock_fitparse.FitFile.return_value = mock_ff
+        with patch.dict(sys.modules, {"fitparse": mock_fitparse}):
+            return parse_fit("/fake/path.fit")
+
+    def _process(self, sessions=YOSEMITE_SESSIONS, **workout_overrides):
+        _, _, _, fit_tss, fit_sport, legs = self._parse(sessions)
+        w = make_workout(
+            activityId=68, startTime=1793981540710, totalTime=16307.956,
+            totalDistance=5068, totalAscent=401.2, **workout_overrides,
+        )
+        return process_workout(
+            w, None, None, "", default_cfg(),
+            fit_tss=fit_tss, fit_sport=fit_sport, fit_legs=legs,
+        )
+
+    # fit.py
+
+    def test_parse_fit_returns_one_leg_per_session(self):
+        _, _, _, _, sport, legs = self._parse(YOSEMITE_SESSIONS)
+        self.assertEqual(
+            [leg["sport"] for leg in legs],
+            ["hiking/trail", "rock_climbing", "hiking/trail", "rock_climbing", "hiking/trail"],
+        )
+        self.assertEqual(sport, "hiking/trail")  # first session, as before
+        self.assertEqual(legs[1]["timer_time_s"], 9521.7)
+        self.assertEqual(legs[1]["avg_hr"], 96)
+
+    def test_parse_fit_sums_tss_across_sessions(self):
+        sessions = [
+            _fit_session("hiking", None, datetime(2026, 1, 1, 8), 600, 1000, 50, 110, 130, tss=12.4),
+            _fit_session("rock_climbing", None, datetime(2026, 1, 1, 9), 3600, 100, 80, 120, 150, tss=40.2),
+        ]
+        _, _, _, tss, _, _ = self._parse(sessions)
+        self.assertEqual(tss, 52)  # previously only the last session's 40 survived
+
+    def test_parse_fit_single_session_is_one_leg(self):
+        _, _, _, tss, sport, legs = self._parse([
+            _fit_session("running", "trail", datetime(2026, 1, 1, 8), 3600, 10000, 300, 150, 170, tss=85.3),
+        ])
+        self.assertEqual(len(legs), 1)
+        self.assertEqual(tss, 85)
+        self.assertEqual(sport, "running/trail")
+
+    # process.py
+
+    def test_multisport_workout_gets_legs(self):
+        result = self._process()
+        self.assertEqual(result["sport_type"], "Multisport")
+        self.assertEqual(
+            [leg["sport_type"] for leg in result["legs"]],
+            ["Hike", "Climbing", "Hike", "Climbing", "Hike"],
+        )
+        self.assertEqual(result["legs"][1]["moving_time_fmt"], "2:38")
+        self.assertEqual(result["legs"][1]["distance_km"], 1.1)
+        self.assertEqual(result["legs"][1]["elevation_gain"], 227)
+        # Leg moving times add up to the workout's totalTime.
+        self.assertAlmostEqual(
+            sum(leg["moving_time_s"] for leg in result["legs"]), 16308, delta=3
+        )
+
+    def test_multisport_leg_start_times_follow_workout_start(self):
+        result = self._process()
+        start = result["start_dt"]
+        offsets = [(leg["start_dt"] - start).total_seconds() for leg in result["legs"]]
+        self.assertEqual(offsets[0], 0)
+        self.assertEqual(offsets[1], 4161)  # 17:21:41 - 16:12:20 UTC
+        self.assertEqual(offsets, sorted(offsets))
+
+    def test_multisport_has_no_mixed_speed_or_vam(self):
+        result = self._process()
+        self.assertIsNone(result["speed"])
+        self.assertIsNone(result["pace"])
+        self.assertIsNone(result["vam"])
+
+    def test_single_leg_workout_has_no_legs(self):
+        w = make_workout(activityId=11)
+        result = process_workout(
+            w, None, None, "", default_cfg(), fit_sport="hiking",
+            fit_legs=[{"sport": "hiking", "start_time": None}],
+        )
+        self.assertEqual(result["sport_type"], "Hike")
+        self.assertIsNone(result["legs"])
+
+    def test_activity_id_68_without_fit_is_multisport(self):
+        self.assertEqual(normalise_sport(68), "Multisport")
+
+    def test_period_summary_breaks_multisport_into_leg_sports(self):
+        workout = self._process()
+        run = process_workout(make_workout(activityId=1), None, None, "", default_cfg())
+        day = {"date": "2026-11-06", "workouts": [workout, run], "load": None, "wellness": None}
+        summary = compute_period_summary([day])
+        # Two climbing legs in one workout are one climbing session.
+        self.assertEqual(summary["sport_counts"], {"Hike": 1, "Climbing": 1, "Run": 1})
+        self.assertEqual(summary["sport_distance"]["Climbing"], 1.1)  # 1.1 + 0.0
+        self.assertEqual(summary["sport_distance"]["Hike"], 3.9)      # 0.6 + 2.9 + 0.4
+        self.assertEqual(summary["num_activities"], 2)
+
+    # render.py
+
+    def test_render_multisport_heading_and_legs(self):
+        full = "\n".join(_render_workout(self._process()))
+        self.assertRegex(
+            full,
+            r"### Multisport: Hike → Climbing → Hike → Climbing → Hike \(\d\d:\d\d\)",
+        )
+        self.assertIn("- Legs:", full)
+        self.assertRegex(full, r"  - \d\d:\d\d Climbing: 2:38 \| 1\.1 km \| \+227 m \| HR avg 96 / max 143")
+        # A 28 m pitch rounds to 0.0 km and is left out rather than shown as "0.0 km".
+        self.assertRegex(full, r"  - \d\d:\d\d Climbing: 0:18 \| \+21 m \| HR avg 113 / max 127")
+        self.assertNotIn("Avg speed", full)
 
 
 if __name__ == "__main__":

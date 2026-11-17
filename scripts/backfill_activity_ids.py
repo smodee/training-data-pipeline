@@ -54,7 +54,7 @@ def main():
         fit_path = suunto.download_fit(cfg, key, quiet=True)
         fit_sport = None
         if fit_path:
-            _, _, _, _, fit_sport = parse_fit(fit_path)
+            _, _, _, _, fit_sport, _ = parse_fit(fit_path)
 
         internal = _map_fit_sport(fit_sport)
         if internal:

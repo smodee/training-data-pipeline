@@ -69,10 +69,13 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
         workout_id = suunto._first(workout, "key", "id", "workoutId")
 
         hr_data, time_data, description, fit_tss, fit_sport = None, None, "", None, None
+        fit_legs = []
         if not no_fit:
             fit_path = suunto.download_fit(cfg, workout_id, quiet=quiet)
             if fit_path:
-                hr_data, time_data, description, fit_tss, fit_sport = parse_fit(fit_path)
+                (
+                    hr_data, time_data, description, fit_tss, fit_sport, fit_legs
+                ) = parse_fit(fit_path)
 
         # Combine FIT description (up to 256 chars) and comments; both may carry
         # useful info so we always fetch comments and append if non-empty.
@@ -81,7 +84,8 @@ def _fetch_workouts(cfg, start, end, no_fit, quiet):
 
         processed.append(
             process_workout(
-                workout, hr_data, time_data, notes, cfg, fit_tss=fit_tss, fit_sport=fit_sport
+                workout, hr_data, time_data, notes, cfg,
+                fit_tss=fit_tss, fit_sport=fit_sport, fit_legs=fit_legs,
             )
         )
 
