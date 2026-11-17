@@ -51,7 +51,9 @@ def main():
         if not no_fit and key:
             fit_path = suunto.download_fit(cfg, key, quiet=True)
             if fit_path:
-                _, _, desc, _, fit_sport = parse_fit(fit_path)
+                _, _, desc, _, fit_sport, legs = parse_fit(fit_path)
+                if len(legs) > 1:
+                    fit_sport = "multisport:" + ">".join(str(l["sport"]) for l in legs)
 
         print(
             f"activityId {str(aid):>4} | fit_sport {str(fit_sport):>22} | {_start_str(w)} "

@@ -31,6 +31,7 @@ SPORT_LABELS = {
     "Yoga": "yoga",
     "YogaFlexibility": "yoga/flexibility",
     "DiscGolf": "disc golf",
+    "Multisport": "multisport",
 }
 
 
@@ -188,6 +189,28 @@ def _render_recovery_line(wellness):
     return line
 
 
+def _format_leg(leg):
+    """Format one multisport leg, e.g. '09:21 Climbing: 2:38 | 1.1 km | +227 m | HR avg 96 / max 143'."""
+    label = _sport_label(leg["sport_type"]).title()
+    start_dt = leg.get("start_dt")
+    head = f"{start_dt.strftime('%H:%M')} {label}" if start_dt is not None else label
+    parts = [leg["moving_time_fmt"]]
+    if leg["distance_km"]:
+        parts.append(f"{leg['distance_km']} km")
+    if leg["elevation_gain"]:
+        parts.append(f"+{leg['elevation_gain']} m")
+    hr_parts = []
+    if leg.get("avg_hr"):
+        hr_parts.append(f"avg {round(leg['avg_hr'])}")
+    if leg.get("max_hr"):
+        hr_parts.append(f"max {round(leg['max_hr'])}")
+    if hr_parts:
+        parts.append(f"HR {' / '.join(hr_parts)}")
+    if leg.get("tss") is not None:
+        parts.append(f"TSS {leg['tss']}")
+    return f"{head}: {' | '.join(parts)}"
+
+
 def _render_workout(workout):
     """Render a single workout block (### heading + metric bullets)."""
     name = workout["name"]
@@ -197,10 +220,14 @@ def _render_workout(workout):
     # When name is the sport-type key (i.e. no custom name was found in the API), show the
     # human sport label and append the start time — Suunto provides no activity name, so
     # this gives an ordering cue for days with multiple sessions (already sorted by time).
+    legs = workout.get("legs")
     if name and name != sport:
         heading = f"{name} ({sport_lbl})"
     else:
         heading = sport_lbl.title()
+        if legs:
+            sequence = " → ".join(_sport_label(leg["sport_type"]).title() for leg in legs)
+            heading = f"{heading}: {sequence}"
         if start_dt is not None:
             heading = f"{heading} ({start_dt.strftime('%H:%M')})"
     lines = [f"### {heading}", ""]
@@ -252,6 +279,10 @@ def _render_workout(workout):
         load_parts.append(f"EPOC: {workout['epoc']} ml/kg")
     if load_parts:
         lines.append(f"- {' | '.join(load_parts)}")
+
+    if legs:
+        lines.append("- Legs:")
+        lines.extend(f"  - {_format_leg(leg)}" for leg in legs)
 
     if workout["notes"]:
         lines.append(f"- Notes: {workout['notes']}")

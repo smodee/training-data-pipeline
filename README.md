@@ -15,6 +15,7 @@ reports suitable for LLM analysis and coaching.
 - Fetches your Suunto workouts for a given date range via `suuntool`
 - Computes per-activity HR zone splits from FIT-file streams using your personal VT1/VT2 thresholds
 - Calculates pace (runs), speed (rides), and VAM (climbing)
+- Splits Suunto multisport workouts into their legs (e.g. hike → climb → hike), each with its own time, distance, ascent and HR, and counts each leg's sport in the period summary
 - Tracks training load: per-activity **TSS** and **EPOC**, plus rolling **CTL / ATL / Form**
 - Anchors every day with wellness data (recovery, sleep duration/quality/stages)
 - Outputs day-centric Markdown reports (weekly, monthly, or single combined)

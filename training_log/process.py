@@ -116,6 +116,7 @@ SUUNTO_ACTIVITY_ID_MAP = {
     29: "Climbing",        # rock climbing / finger training
     51: "YogaFlexibility", # yoga/pilates, used for mobility/flexibility
     66: "DiscGolf",        # disc golf
+    68: "Multisport",      # multisport (per-segment sports live in the FIT sessions)
     73: "CircuitTraining", # S&C / circuit sessions
     83: "Mountaineering",  # alpine climbing / mountaineering
 }
@@ -290,12 +291,55 @@ def _workout_start(workout):
     return parse_date(str(raw))
 
 
-def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_sport=None):
-    """Process a single Suunto workout dict into an enriched, render-ready dict."""
+MULTISPORT = "Multisport"
+
+
+def _process_legs(fit_legs, start_dt):
+    """Turn the FIT session legs of a multisport workout into render-ready dicts.
+
+    Leg start times in the FIT file are UTC; each leg is placed at the workout's local
+    start plus its offset from the first leg, so the times agree with the heading.
+    """
+    first_start = fit_legs[0].get("start_time")
+    legs = []
+    for leg in fit_legs:
+        token = leg.get("sport")
+        sport = normalise_sport(token.split("/", 1)[0] if token else None, fit_sport=token)
+
+        leg_start = start_dt
+        if first_start is not None and leg.get("start_time") is not None:
+            leg_start = start_dt + (leg["start_time"] - first_start)
+
+        moving = int(round(leg.get("timer_time_s") or 0))
+        distance_m = leg.get("distance_m") or 0
+        legs.append({
+            "sport_type": sport,
+            "start_dt": leg_start,
+            "moving_time_s": moving,
+            "moving_time_fmt": f"{moving // 3600}:{(moving % 3600) // 60:02d}",
+            "distance_km": round(distance_m / 1000, 1) if distance_m else 0,
+            "elevation_gain": round(leg.get("ascent_m") or 0),
+            "avg_hr": leg.get("avg_hr"),
+            "max_hr": leg.get("max_hr"),
+            "tss": leg.get("tss"),
+        })
+    return legs
+
+
+def process_workout(
+    workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_sport=None, fit_legs=None
+):
+    """Process a single Suunto workout dict into an enriched, render-ready dict.
+
+    ``fit_legs`` are the per-session legs from :func:`training_log.fit.parse_fit`. More
+    than one leg means a Suunto multisport workout: the workout is labelled
+    ``Multisport`` and carries a ``legs`` list, one entry per sport segment.
+    """
     # activityId (int) comes from the list; string names may come from workouts get.
     # The FIT sport enum (fit_sport), when present, is preferred as it's standardised.
     raw_sport = _first(workout, "activityType", "sport", "sportType", "type", "activityId")
-    sport = normalise_sport(raw_sport, fit_sport=fit_sport)
+    is_multisport = bool(fit_legs) and len(fit_legs) > 1
+    sport = MULTISPORT if is_multisport else normalise_sport(raw_sport, fit_sport=fit_sport)
 
     distance_m = _first(workout, "totalDistance", "distance", default=0) or 0
     # totalTime confirmed from workouts list; duration/movingTime may appear in workouts get.
@@ -336,10 +380,15 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_s
         "avg_cadence": avg_cadence,
         "epoc": extract_epoc(workout),
         "has_heartrate": avg_hr is not None or bool(hr_data),
+        "legs": _process_legs(fit_legs, start_dt) if is_multisport else None,
     }
 
-    # Pace or speed
-    if is_run_type(sport):
+    # Pace or speed. A multisport average mixes e.g. hiking and climbing, so it's
+    # meaningless and left out; the per-leg lines carry the useful detail instead.
+    if is_multisport:
+        result["pace"] = None
+        result["speed"] = None
+    elif is_run_type(sport):
         pace = compute_pace(distance_m, moving_time_s)
         result["pace"] = f"{pace[0]}:{pace[1]:02d}" if pace else None
         result["speed"] = None
@@ -347,7 +396,7 @@ def process_workout(workout, hr_data, time_data, notes, cfg, fit_tss=None, fit_s
         result["pace"] = None
         result["speed"] = compute_speed_kmh(distance_m, moving_time_s)
 
-    result["vam"] = compute_vam(elevation, moving_time_s)
+    result["vam"] = None if is_multisport else compute_vam(elevation, moving_time_s)
 
     # Zone distribution from the FIT stream when we have it.
     if hr_data and time_data:
@@ -560,11 +609,17 @@ def compute_period_summary(days):
     total_distance = sum(w["distance_km"] for w in workouts)
     total_elevation = sum(w["elevation_gain"] for w in workouts)
 
+    # A multisport workout is broken down by its legs' sports, so the climbing in a
+    # hike → climb → hike day shows up as climbing. Each sport counts once per workout
+    # (two climbing legs are still one climbing session); distances add up per leg.
     sport_counts = defaultdict(int)
     sport_distance = defaultdict(float)
     for w in workouts:
-        sport_counts[w["sport_type"]] += 1
-        sport_distance[w["sport_type"]] += w["distance_km"]
+        legs = w.get("legs") or [w]
+        for sport in {leg["sport_type"] for leg in legs}:
+            sport_counts[sport] += 1
+        for leg in legs:
+            sport_distance[leg["sport_type"]] += leg["distance_km"]
 
     agg_zone_seconds = defaultdict(int)
     has_any_hr = False
