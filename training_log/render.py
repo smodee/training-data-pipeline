@@ -32,6 +32,8 @@ SPORT_LABELS = {
     "YogaFlexibility": "yoga/flexibility",
     "DiscGolf": "disc golf",
     "Multisport": "multisport",
+    "Crosstrainer": "crosstrainer",
+    "Pilates": "pilates",
 }
 
 

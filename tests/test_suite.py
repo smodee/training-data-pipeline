@@ -320,6 +320,32 @@ class TestNormaliseSport(unittest.TestCase):
         self.assertEqual(normalise_sport(51), "YogaFlexibility")
         self.assertEqual(normalise_sport(66), "DiscGolf")
         self.assertEqual(normalise_sport(73), "CircuitTraining")
+        self.assertEqual(normalise_sport(55), "Crosstrainer")
+        self.assertEqual(normalise_sport(120), "Pilates")
+
+    def test_fitness_equipment_sub_sports(self):
+        # Suunto writes Crosstrainer as elliptical and Pilates as pilates, both under
+        # the FIT "fitness_equipment" family.
+        self.assertEqual(normalise_sport(55, fit_sport="fitness_equipment/elliptical"), "Crosstrainer")
+        self.assertEqual(normalise_sport(120, fit_sport="fitness_equipment/pilates"), "Pilates")
+
+    def test_bare_fitness_equipment_defers_to_activity_id(self):
+        # The bare family (or an unmapped sub-sport) is a catch-all and must not mask the id.
+        self.assertEqual(normalise_sport(73, fit_sport="fitness_equipment"), "CircuitTraining")
+        self.assertEqual(normalise_sport(73, fit_sport="fitness_equipment/stair_climbing"), "CircuitTraining")
+
+    def test_crosstrainer_shows_no_speed(self):
+        w = make_workout(activityId=55, totalDistance=1400, totalTime=3600, totalAscent=0)
+        result = process_workout(w, None, None, "", default_cfg())
+        self.assertEqual(result["sport_type"], "Crosstrainer")
+        self.assertIsNone(result["speed"])
+        self.assertIsNone(result["pace"])
+
+    def test_breakdown_labels(self):
+        self.assertEqual(
+            _sport_breakdown_count({"Crosstrainer": 3, "Pilates": 2}),
+            "3 crosstrainers, 2 pilates",
+        )
 
     def test_unknown_int_passthrough(self):
         self.assertEqual(normalise_sport(999), "Activity999")

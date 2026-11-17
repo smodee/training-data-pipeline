@@ -115,10 +115,12 @@ SUUNTO_ACTIVITY_ID_MAP = {
     22: "TrailRun",        # trail running
     29: "Climbing",        # rock climbing / finger training
     51: "YogaFlexibility", # yoga/pilates, used for mobility/flexibility
+    55: "Crosstrainer",    # crosstrainer, used for stepmill sessions
     66: "DiscGolf",        # disc golf
     68: "Multisport",      # multisport (per-segment sports live in the FIT sessions)
     73: "CircuitTraining", # S&C / circuit sessions
     83: "Mountaineering",  # alpine climbing / mountaineering
+    120: "Pilates",        # pilates, used for L5 rehab
 }
 
 # The FIT session ``sport``/``sub_sport`` enum is the standardised ANT/Garmin
@@ -146,6 +148,10 @@ FIT_SPORT_MAP = {
     "alpine_skiing": "AlpineSki",
     "snowboarding": "Snowboard",
     "disc_golf": "DiscGolf",
+    # Only these "fitness_equipment" sub-sports are mapped; the bare family is a
+    # catch-all, so anything else in it defers to the numeric activityId.
+    "fitness_equipment/elliptical": "Crosstrainer",
+    "fitness_equipment/pilates": "Pilates",
     # Deliberately NOT mapped: the FIT "training" family (bare "training" and its
     # sub-sports). It's the ANT standard's generic gym/fitness catch-all, and Suunto
     # overloads it onto several of its own activity types (e.g. activityId 73 =
@@ -156,6 +162,9 @@ FIT_SPORT_MAP = {
 
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 PACE_TYPES = RUN_TYPES  # sport types that display pace instead of speed
+# Stationary sessions: the watch's distance there is a step-count estimate, so an
+# average speed (e.g. "1.3 km/h" on a stepmill) means nothing and is left out.
+NO_SPEED_TYPES = {"Crosstrainer", "Pilates"}
 
 
 def _map_fit_sport(token):
@@ -385,7 +394,7 @@ def process_workout(
 
     # Pace or speed. A multisport average mixes e.g. hiking and climbing, so it's
     # meaningless and left out; the per-leg lines carry the useful detail instead.
-    if is_multisport:
+    if is_multisport or sport in NO_SPEED_TYPES:
         result["pace"] = None
         result["speed"] = None
     elif is_run_type(sport):
